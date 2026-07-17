@@ -29,17 +29,6 @@
     <Compile Remove="resources/**" />
   </ItemGroup>
 
-  <!-- Post-build: copy DLL to local plugins/ and (if GameInstallDir is set) to game dir -->
-  <PropertyGroup>
-    <PluginDeployDir>$(MSBuildThisFileDirectory)plugins\minimalnameplate\</PluginDeployDir>
-    <GamePluginDir Condition="'$(GameInstallDir)' != ''">$(GameInstallDir)\stellar\plugins\minimalnameplate\</GamePluginDir>
-  </PropertyGroup>
-
-  <Target Name="DeployPlugin" AfterTargets="Build">
-    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(PluginDeployDir)" />
-    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(GamePluginDir)"
-          Condition="'$(GamePluginDir)' != ''" />
-    <Warning Text="Local.props not found — skipping game deploy. Copy Local.props.example to Local.props and set GameInstallDir."
-             Condition="'$(GamePluginDir)' == ''" />
-  </Target>
+  <!-- Deploy is a per-machine dev concern: the DeployPlugin target lives in Local.props (gitignored), imported at the
+       top of this file. A CI/registry build has no Local.props, so it produces just the DLL — no deploy, no warning. -->
 </Project>
