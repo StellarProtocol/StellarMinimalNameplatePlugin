@@ -52,8 +52,9 @@ public sealed class Plugin : IStellarPlugin
                 Category:    WindowCategory.Tools,
                 Style:       WindowPanelStyle.GlassMenu)
             { Draggable = true, Closable = true, StartVisible = false,
-              // Gameplay tool: draw only while in-world.
-              ShouldRender = () => _services.ClientState.Phase == GamePhase.World },
+              // Gameplay tool: draw only while in-world, and hide during loading screens.
+              ShouldRender = () => _services.ClientState.Phase == GamePhase.World
+                                   && (_services.ClientState.UiState & GameUIState.Loading) == 0 },
             Root: BuildRoot(),
             OnClose: () => _window!.SetVisible(false)));
 
