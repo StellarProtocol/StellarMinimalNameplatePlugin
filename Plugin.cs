@@ -33,6 +33,7 @@ public sealed class Plugin : IStellarPlugin
         _hideSelf = _cfg.Get<bool> ("minimalnameplate_hideself", false);
         ClassIconOverlay.SizePixels    = _cfg.Get<float>("minimalnameplate_sizepx", 50f);
         ClassIconOverlay.NameSize      = _cfg.Get<float>("minimalnameplate_namepx", 64f);
+        ClassIconOverlay.MaxIcons      = (int)_cfg.Get<float>("minimalnameplate_maxicons", 100f);
         ClassIconOverlay.ShowClassIcon = _showIcon;
         ClassIconOverlay.ShowName      = _showName;
         ClassIconOverlay.HideSelf      = _hideSelf;
@@ -142,6 +143,22 @@ public sealed class Plugin : IStellarPlugin
                 Set: v  => { ClassIconOverlay.NameSize = v; _cfg.Set<float>("minimalnameplate_namepx", v); _cfg.Save(); },
                 Min: 16f, Max: 160f), Weight: 1f),
             new CellElement(new TextElement(() => $"{ClassIconOverlay.NameSize:F0}"), Width: 52f),
+        }, Gap: 6f),
+        new RowElement(new HudElement[]
+        {
+            new CellElement(new TextElement(() => "Max Shown", Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
+            new CellElement(new SliderElement(
+                Get: () => ClassIconOverlay.MaxIcons,
+                Set: v  =>
+                {
+                    int n = (int)Math.Round(v);
+                    if (n < 5) n = 5; else if (n > 200) n = 200;   // 200 = the AOI-tracking safety bound
+                    ClassIconOverlay.MaxIcons = n;
+                    _cfg.Set<float>("minimalnameplate_maxicons", n);
+                    _cfg.Save();
+                },
+                Min: 5f, Max: 200f), Weight: 1f),
+            new CellElement(new TextElement(() => $"{ClassIconOverlay.MaxIcons}"), Width: 52f),
         }, Gap: 6f),
     }, Gap: 8f);
 

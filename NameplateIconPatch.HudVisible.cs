@@ -18,16 +18,32 @@ internal static partial class NameplateIconPatch
     // uuid -> bitmask of EHudVisibleSource values currently hiding this entity's plate (bit = 1 << source).
     private static readonly Dictionary<long, int> _hideMask = new();
 
-    // Sources we do NOT mirror, because the overlay handles them itself:
-    //   ELod(0), EDistance(3) — the overlay intentionally tracks players past the game's nameplate range.
-    //   EDead(5)              — dead players are shown deliberately (red name + grayed badge).
-    private const int ExcludedSources = (1 << 0) | (1 << 3) | (1 << 5);
+    // Sources we DELIBERATELY mirror — the intentional, gameplay-meaningful per-player hides where the game removes an
+    // individual plate and our overlay should vanish too. This is an ALLOWLIST: every other source is IGNORED
+    // (fail-open → draw). Why an allowlist and not a denylist:
+    //   The mask is built by post-fixing the game's SetHudInVisible/SetHudSwitchValue setters, so we only ever see a
+    //   bit *set* when the game calls that setter. At login the game runs a scene/layer transition and streams players
+    //   in — it sets transient hides (ESwitchLayer(7) layer switch, ERide(11) mounted, ERevive(9)) and then CLEARS
+    //   them by rebuilding/re-registering the plate, NOT by calling the setter with isHide=false. We record the set,
+    //   never the clear → the bit sticks → the badge is skipped until relog. A denylist mirrored all those transient
+    //   sources; an allowlist can't get stuck, because an unexpected/uncleared source outside it never suppresses a
+    //   badge. Sources left OUT on purpose: ELod(0)/EDistance(3) (overlay tracks past nameplate range itself),
+    //   EDead(5) (dead shown deliberately — red name + grayed badge), EPhoto(1)/ECutScene(2) (already covered by the
+    //   global HUD switch), ESwitchLayer(7)/ERevive(9)/ESelfCtrl(10)/ERide(11) (transient, cleared via unobserved
+    //   rebuild paths → the stuck-bit-at-login bug).
+    //   EDialog(6)    — the player is in an NPC dialog / interaction.
+    //   EDisappear(8) — the player is deliberately made to disappear (stealth/vanish gameplay).
+    //   EHideSeek(12) — TAG / hide-and-seek hides the hider's plate.
+    private const int MirroredSources = (1 << 6) | (1 << 8) | (1 << 12);
 
     private const int MaskTypeTitle = 0;   // EHudMaskType.Title — the name slot our overlay stands in for
 
-    /// <summary>True if the game has hidden this player's plate for a source we mirror (tag, disappear, dialog, …).</summary>
+    /// <summary>True if the game has hidden this player's plate for a source we mirror (tag, disappear, dialog).</summary>
     public static bool IsPlateHiddenByGame(long uuid)
-        => _hideMask.TryGetValue(uuid, out var m) && (m & ~ExcludedSources) != 0;
+        => _hideMask.TryGetValue(uuid, out var m) && (m & MirroredSources) != 0;
+
+    /// <summary>Drop all tracked hide state — call on logout so a fresh session never inherits a stale bit.</summary>
+    public static void ClearHideMask() => _hideMask.Clear();
 
     internal static void InstallHudVisibleTracking(Harmony harmony, Action<string> log)
     {

@@ -42,7 +42,8 @@ internal sealed partial class ClassIconOverlay
     private const float RefScreenHeight = 1440f;    // sizes tuned at 1440p; scaled by Screen.height/this
     private float       _resScale       = 1f;       // Screen.height / RefScreenHeight, recomputed per frame
     private const float IconPixels      = 128f;     // reference canvas-pixel size (name-scale reference)
-    private const int   MaxIcons        = 40;       // per-frame draw cap
+    private const int   MaxPlayers      = 200;      // AOI players tracked per rebuild (collection safety bound)
+    public static int   MaxIcons        = 100;      // badges drawn per frame, nearest-first (raid/crowd cap); user-tunable slider
 
     // Flip to true in source to re-enable the recurring diagnostics (periodic state dump + sprite-scan matches) in
     // LogOutput.log. Off by default so a working install stays quiet; one-time load/resolve lines always log.
@@ -157,7 +158,7 @@ internal sealed partial class ClassIconOverlay
     {
         try
         {
-            if (!_services.ClientState.IsLoggedIn) { _players.Clear(); return; }
+            if (!_services.ClientState.IsLoggedIn) { _players.Clear(); NameplateIconPatch.ClearHideMask(); return; }
             var cam = MainCamera();
             if (cam == null) return;
             // MainCamera() can hand back a DESTROYED camera during a scene transition — reading transform throws;
@@ -170,7 +171,7 @@ internal sealed partial class ClassIconOverlay
             if (_players.Count == 0 || _rebuildTimer >= 0.5)
             {
                 _rebuildTimer = 0;
-                RebuildPlayers();
+                RebuildPlayers(camPos);
                 // Re-hide any game plates that came back via a rebuild path we don't patch (dungeons/combat).
                 if (NameplateIconPatch.HidePlate) NameplateIconPatch.ReapplyAll();
             }
@@ -219,42 +220,53 @@ internal sealed partial class ClassIconOverlay
         }
     }
 
-    // Every AOI player (uuid low-16 == 640) with a resolvable profession. Throttled — not called every frame.
-    private void RebuildPlayers()
+    // Every AOI player (uuid low-16 == 640) with a resolvable profession, scored by camera distance. Throttled — not
+    // called every frame. When more players are present than we draw (MaxIcons), the NEAREST win: a raid/crowd no
+    // longer arbitrarily drops whoever enumerated first. (The old uuid-order + 40 cap left far-AND-near players blank,
+    // with the game plate hidden for them too, so those players showed nothing at all.)
+    private void RebuildPlayers(Vector3 camPos)
     {
         _players.Clear();
         if (!Resolve()) return;
 
+        var scored = new List<(long uuid, int prof, float dist)>();
+
         var local = _services.CombatSnapshot.LocalEntityId;
         int selfProf = (!HideSelf && local.Value != 0) ? ResolveProfession(local.Value) : 0;
-        if (selfProf > 0) _players.Add((local.Value, selfProf));
+        if (selfProf > 0) scored.Add((local.Value, selfProf, PlayerDist(local.Value, camPos)));
 
         try
         {
-            var mgr = _piEntMgrInstance!.GetValue(null);
-            if (mgr == null) return;
-            var dict = _piEntityDict != null ? _piEntityDict.GetValue(mgr) : _fiEntityDict?.GetValue(mgr);
+            var mgr  = _piEntMgrInstance!.GetValue(null);
+            var dict = mgr == null ? null : (_piEntityDict != null ? _piEntityDict.GetValue(mgr) : _fiEntityDict?.GetValue(mgr));
             var keys = dict?.GetType().GetProperty("Keys")?.GetValue(dict);
-            if (keys == null) return;
-
-            foreach (var k in WalkIl2Cpp(keys))
+            if (keys != null)
             {
-                long uuid = Convert.ToInt64(k);
-                if ((uuid & 0xFFFF) != PlayerTypeMarker) continue; // players only
-                if (uuid == local.Value) continue;                 // self already added
-                int prof = ResolveProfession(uuid);
-                if (prof > 0) _players.Add((uuid, prof));
-                if (_players.Count >= MaxIcons) break;
+                foreach (var k in WalkIl2Cpp(keys))
+                {
+                    long uuid = Convert.ToInt64(k);
+                    if ((uuid & 0xFFFF) != PlayerTypeMarker) continue; // players only
+                    if (uuid == local.Value) continue;                 // self already scored
+                    int prof = ResolveProfession(uuid);
+                    if (prof > 0) scored.Add((uuid, prof, PlayerDist(uuid, camPos)));
+                    if (scored.Count >= MaxPlayers) break;             // safety bound on tracked players
+                }
             }
-
-            // Stable order (entityDict order can shuffle, briefly swapping which class a badge shows).
-            _players.Sort((a, b) => a.uuid.CompareTo(b.uuid));
         }
         catch (Exception ex)
         {
             _services.Log.Warning($"[MinimalNameplate] RebuildPlayers error: {ex.InnerException?.Message ?? ex.Message}");
         }
+
+        // Nearest first so the per-frame MaxIcons draw budget goes to the closest (most relevant) players; ties broken
+        // by uuid for a stable order (entityDict order can shuffle, briefly swapping which class a badge shows).
+        scored.Sort((a, b) => a.dist != b.dist ? a.dist.CompareTo(b.dist) : a.uuid.CompareTo(b.uuid));
+        foreach (var s in scored) _players.Add((s.uuid, s.prof));
     }
+
+    // Camera distance to a player's head anchor; unresolvable (out of AOI / model unloaded) sorts last.
+    private float PlayerDist(long uuid, Vector3 camPos)
+        => TryGetHeadWorld(uuid, out var h) ? Vector3.Distance(camPos, h) : float.MaxValue;
 
     private bool AnyUncached()
     {
