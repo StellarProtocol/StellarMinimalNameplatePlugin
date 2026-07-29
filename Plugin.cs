@@ -51,7 +51,9 @@ public sealed class Plugin : IStellarPlugin
                 DefaultRect: new WindowRect(_services.Framework.ScreenWidth - 460f, 20f, 440f, 0f),
                 Category:    WindowCategory.Tools,
                 Style:       WindowPanelStyle.GlassMenu)
-            { Draggable = true, Closable = true, StartVisible = false },
+            { Draggable = true, Closable = true, StartVisible = false,
+              // Gameplay tool: draw only while in-world.
+              ShouldRender = () => _services.ClientState.Phase == GamePhase.World },
             Root: BuildRoot(),
             OnClose: () => _window!.SetVisible(false)));
 
