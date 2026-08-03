@@ -383,8 +383,8 @@ internal sealed partial class ClassIconOverlay
         _attrApiResolved = true;
         try
         {
-            var entT = FindType("Panda.ZGame.ZEntity");
-            var attrEnum = FindType("Zproto.EAttrType");
+            var entT = StellarInterop.FindType("Panda.ZGame.ZEntity");
+            var attrEnum = StellarInterop.FindType("Zproto.EAttrType");
             if (entT != null && attrEnum != null)
             {
                 foreach (var m in entT.GetMethods(BindingFlags.Public | BindingFlags.Instance))
@@ -664,10 +664,10 @@ internal sealed partial class ClassIconOverlay
         _resolved = true;
         try
         {
-            var entMgr = FindType("Panda.ZGame.ZEntityMgr");
-            var camMgr = FindType("Panda.ZGame.CameraManager");
-            var ent    = FindType("Panda.ZGame.ZEntity");
-            var model  = FindType("Panda.ZGame.ZModel");
+            var entMgr = StellarInterop.FindType("Panda.ZGame.ZEntityMgr");
+            var camMgr = StellarInterop.FindType("Panda.ZGame.CameraManager");
+            var ent    = StellarInterop.FindType("Panda.ZGame.ZEntity");
+            var model  = StellarInterop.FindType("Panda.ZGame.ZModel");
             if (entMgr == null || camMgr == null || ent == null || model == null)
             {
                 _services.Log.Warning($"[MinimalNameplate] type resolve failed entMgr={entMgr != null} cam={camMgr != null} ent={ent != null} model={model != null}");
@@ -688,7 +688,7 @@ internal sealed partial class ClassIconOverlay
 
             try
             {
-                var hudCompType = FindType("Panda.ZGame.HudComp");
+                var hudCompType = StellarInterop.FindType("Panda.ZGame.HudComp");
                 if (hudCompType != null)
                 {
                     foreach (var m in model.GetMethods(BindingFlags.Public | BindingFlags.Instance))
@@ -710,15 +710,5 @@ internal sealed partial class ClassIconOverlay
             _services.Log.Warning($"[MinimalNameplate] Resolve error: {ex.Message}");
             _resolveFailed = true; return false;
         }
-    }
-
-    private static Type? FindType(string fullName)
-    {
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            var t = asm.GetType(fullName);
-            if (t is not null) return t;
-        }
-        return null;
     }
 }

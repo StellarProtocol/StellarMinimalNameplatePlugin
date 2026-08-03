@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using Stellar.Abstractions.Services;
 
 namespace Stellar.MinimalNameplate;
 
@@ -30,7 +31,7 @@ internal sealed partial class ClassIconOverlay
         _hudMgrResolved = true;
         try
         {
-            var t = FindType("Panda.Hud.HudMgr");
+            var t = StellarInterop.FindType("Panda.Hud.HudMgr");
             if (t == null) { _services.Log.Warning("[MinimalNameplate] hud-vis: HudMgr not found — visibility mirror off"); return; }
 
             const BindingFlags pubInst = BindingFlags.Public | BindingFlags.Instance;
@@ -40,8 +41,8 @@ internal sealed partial class ClassIconOverlay
             _fiHudDisabledFlag    = t.GetField("hudDisabledFlag_", BindingFlags.NonPublic | BindingFlags.Instance);
             _miGetHudSettingsShow = t.GetMethod("GetHudSettingsShow", pubInst);
 
-            var entEnum  = FindType("Panda.ZGame.EHudSettingEntityType");
-            var funcEnum = FindType("Panda.ZGame.EHudSettingFuncType");
+            var entEnum  = StellarInterop.FindType("Panda.ZGame.EHudSettingEntityType");
+            var funcEnum = StellarInterop.FindType("Panda.ZGame.EHudSettingFuncType");
             if (entEnum  != null) { _entPlayer = Enum.ToObject(entEnum, 1); _entChar = Enum.ToObject(entEnum, 2); }
             if (funcEnum != null) _funcName = Enum.ToObject(funcEnum, 2);
 

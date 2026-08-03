@@ -4,6 +4,7 @@ using System.Reflection;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Stellar.Abstractions.Domain;
+using Stellar.Abstractions.Services;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -38,7 +39,7 @@ internal sealed partial class ClassIconOverlay
         _hudPassResolved = true;
         try
         {
-            var t = FindType("Panda.Hud.HudRenderPass");
+            var t = StellarInterop.FindType("Panda.Hud.HudRenderPass");
             if (t != null)
             {
                 _piHudInstance = t.GetProperty("Instance",
@@ -63,7 +64,7 @@ internal sealed partial class ClassIconOverlay
         _hudFontResolved = true;
         try
         {
-            var t = FindType("Panda.Hud.HudMgr");
+            var t = StellarInterop.FindType("Panda.Hud.HudMgr");
             var inst = t?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)?.GetValue(null);
             _hudFont = t?.GetProperty("HudFont", BindingFlags.Public | BindingFlags.Instance)?.GetValue(inst) as Font;
             _services.Log.Info($"[MinimalNameplate] HUD font={(_hudFont != null)}");

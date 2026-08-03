@@ -9,8 +9,6 @@ public sealed class Plugin : IStellarPlugin
 {
     public string Name => "MinimalNameplate";
 
-    private const string HarmonyId = "stellar.minimalnameplate-plugin";
-
     private readonly IPluginServices  _services;
     private readonly IConfigSection   _cfg;
     private readonly ClassIconOverlay _overlay;
@@ -38,7 +36,7 @@ public sealed class Plugin : IStellarPlugin
         ClassIconOverlay.ShowName      = _showName;
         ClassIconOverlay.HideSelf      = _hideSelf;
 
-        NameplateIconPatch.Install(HarmonyId, _services.Log.Info);
+        NameplateIconPatch.Install(_services.Harmony.Create("nameplate"), _services.Log.Info);
         NameplateIconPatch.HidePlate = _enabled;   // hide the game's plate while our overlay is on
 
         _overlay = new ClassIconOverlay(_services);

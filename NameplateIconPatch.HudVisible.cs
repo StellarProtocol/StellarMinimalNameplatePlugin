@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
+using Stellar.Abstractions.Services;
 
 namespace Stellar.MinimalNameplate;
 
@@ -47,7 +48,7 @@ internal static partial class NameplateIconPatch
 
     internal static void InstallHudVisibleTracking(Harmony harmony, Action<string> log)
     {
-        var hudUtil = FindType("Panda.Hud.HudUtility");
+        var hudUtil = StellarInterop.FindType("Panda.Hud.HudUtility");
         if (hudUtil == null) { log("[MinimalNameplate] HudUtility not found — per-entity hide mirror off"); return; }
 
         int patched = 0;

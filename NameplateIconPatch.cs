@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
+using Stellar.Abstractions.Services;
 
 namespace Stellar.MinimalNameplate;
 
@@ -18,7 +19,6 @@ internal static partial class NameplateIconPatch
 
     private const int SlotPlayerNameValue = 0;  // EHudTitleType.EPlayerName — present only on player plates
 
-    private static Harmony?        _harmony;
     private static Action<string>? _log;
 
     private static PropertyInfo? _piRenderInstance;   // HudTitleRender.Instance (static)
@@ -39,12 +39,11 @@ internal static partial class NameplateIconPatch
     // compId (== entity uuid) → the player's displayed name, captured from the EPlayerName entry's ValidText.
     public static readonly Dictionary<long, string> Names = new();
 
-    internal static bool Install(string harmonyId, Action<string> log)
+    internal static bool Install(Harmony harmony, Action<string> log)
     {
-        _log     = log;
-        _harmony = new Harmony(harmonyId + ".nameplate");
+        _log = log;
 
-        var hudCompType = FindType("Panda.ZGame.HudComp");
+        var hudCompType = StellarInterop.FindType("Panda.ZGame.HudComp");
         if (hudCompType == null) { log("[MinimalNameplate] HudComp not found — patch skipped"); return false; }
 
         const BindingFlags anyInstance = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
@@ -54,7 +53,7 @@ internal static partial class NameplateIconPatch
 
         try
         {
-            _harmony.Patch(target, postfix: new HarmonyMethod(typeof(NameplateIconPatch), nameof(PostfixSetHudTitle)));
+            harmony.Patch(target, postfix: new HarmonyMethod(typeof(NameplateIconPatch), nameof(PostfixSetHudTitle)));
             log("[MinimalNameplate] setHudTitle postfix patched");
 
             // HP updates re-add blood/name via OnHpChanged() (NOT setHudTitle); combat state changes rebuild via
@@ -65,7 +64,7 @@ internal static partial class NameplateIconPatch
             {
                 var m = FindNoArg(hudCompType, rebuild, anyInstance);
                 if (m == null) { log($"[MinimalNameplate] {rebuild} not found"); continue; }
-                try { _harmony.Patch(m, postfix: new HarmonyMethod(typeof(NameplateIconPatch), nameof(PostfixSetHudTitle))); log($"[MinimalNameplate] {rebuild} postfix patched"); }
+                try { harmony.Patch(m, postfix: new HarmonyMethod(typeof(NameplateIconPatch), nameof(PostfixSetHudTitle))); log($"[MinimalNameplate] {rebuild} postfix patched"); }
                 catch (Exception ex) { log($"[MinimalNameplate] {rebuild} patch failed: {ex.Message}"); }
             }
 
@@ -74,27 +73,25 @@ internal static partial class NameplateIconPatch
             var buffTarget = FindNoArg(hudCompType, "updateBuffTips", anyInstance);
             if (buffTarget != null)
             {
-                try { _harmony.Patch(buffTarget, prefix: new HarmonyMethod(typeof(NameplateIconPatch), nameof(PrefixUpdateBuffTips))); log("[MinimalNameplate] updateBuffTips prefix patched"); }
+                try { harmony.Patch(buffTarget, prefix: new HarmonyMethod(typeof(NameplateIconPatch), nameof(PrefixUpdateBuffTips))); log("[MinimalNameplate] updateBuffTips prefix patched"); }
                 catch (Exception ex) { log($"[MinimalNameplate] updateBuffTips patch failed: {ex.Message}"); }
             }
             else log("[MinimalNameplate] updateBuffTips not found");
 
             // Track the game's per-entity plate hiding (tag/hide-and-seek, disappear, dialog, …) so the overlay mirrors it.
-            InstallHudVisibleTracking(_harmony, log);
+            InstallHudVisibleTracking(harmony, log);
             return true;
         }
         catch (Exception ex)
         {
             log($"[MinimalNameplate] setHudTitle patch failed: {ex.Message}");
-            _harmony = null;
             return false;
         }
     }
 
+    // Harmony teardown is owned by IHarmonyHost (auto-unpatches on plugin dispose); reset only transient state here.
     internal static void Uninstall()
     {
-        _harmony?.UnpatchSelf();
-        _harmony          = null;
         _piRenderInstance = null; _miGetTitle = null; _piHudTitleDict = null; _fiHudTitleDict = null;
         _miContainsTitle  = null; _miRemoveTitle = null; _piEntryDic = null; _fiEntryDic = null;
         _piEntryTitleType = null; _piEntryValidText = null; _piCompId = null; _fiCompId = null;
@@ -104,9 +101,9 @@ internal static partial class NameplateIconPatch
 
     private static bool ResolveHudApi(Action<string> log)
     {
-        var enumType   = FindType("Panda.Hud.EHudTitleType");
-        var renderType = FindType("Panda.Hud.HudTitleRender");
-        var titleType  = FindType("Panda.Hud.HudTitle");
+        var enumType   = StellarInterop.FindType("Panda.Hud.EHudTitleType");
+        var renderType = StellarInterop.FindType("Panda.Hud.HudTitleRender");
+        var titleType  = StellarInterop.FindType("Panda.Hud.HudTitle");
         if (enumType == null || renderType == null || titleType == null)
         {
             log($"[MinimalNameplate] type resolve failed enum={enumType != null} render={renderType != null} title={titleType != null}");
@@ -271,16 +268,6 @@ internal static partial class NameplateIconPatch
     {
         foreach (var m in t.GetMethods(flags))
             if (m.Name == name && m.GetParameters().Length == 0) return m;
-        return null;
-    }
-
-    private static Type? FindType(string fullName)
-    {
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            var t = asm.GetType(fullName);
-            if (t is not null) return t;
-        }
         return null;
     }
 }
