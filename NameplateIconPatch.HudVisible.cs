@@ -34,7 +34,10 @@ internal static partial class NameplateIconPatch
     //   rebuild paths → the stuck-bit-at-login bug).
     //   EDialog(6)    — the player is in an NPC dialog / interaction.
     //   EDisappear(8) — the player is deliberately made to disappear (stealth/vanish gameplay).
-    //   EHideSeek(12) — TAG / hide-and-seek hides the hider's plate.
+    //   EHideSeek(12) — TAG / hide-and-seek hides the hider's plate. NOTE: hide-and-seek's ACTUAL hide path is the
+    //                   model-visibility HideSeekComponent (mirrored live in ClassIconOverlay.Visibility.cs via
+    //                   IsHiddenByHideSeek); this EHideSeek HUD-source bit is effectively never set by the game and is
+    //                   kept in MirroredSources only for completeness — do not remove it.
     private const int MirroredSources = (1 << 6) | (1 << 8) | (1 << 12);
 
     private const int MaskTypeTitle = 0;   // EHudMaskType.Title — the name slot our overlay stands in for

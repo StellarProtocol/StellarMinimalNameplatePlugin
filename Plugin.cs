@@ -18,7 +18,8 @@ public sealed class Plugin : IStellarPlugin
     private bool _enabled;
     private bool _showIcon;
     private bool _showName;
-    private bool _hideSelf;
+    private bool _showFriendIcon;
+    private bool _showGuildIcon;
 
     public Plugin(IPluginServices services)
     {
@@ -28,13 +29,15 @@ public sealed class Plugin : IStellarPlugin
         _enabled  = _cfg.Get<bool> ("minimalnameplate_enabled",  false);
         _showIcon = _cfg.Get<bool> ("minimalnameplate_showicon", true);
         _showName = _cfg.Get<bool> ("minimalnameplate_showname", true);
-        _hideSelf = _cfg.Get<bool> ("minimalnameplate_hideself", false);
+        _showFriendIcon = _cfg.Get<bool>("minimalnameplate_showfriend", _cfg.Get<bool>("minimalnameplate_showrelation", true));
+        _showGuildIcon  = _cfg.Get<bool>("minimalnameplate_showguild",  _cfg.Get<bool>("minimalnameplate_showrelation", true));
         ClassIconOverlay.SizePixels    = _cfg.Get<float>("minimalnameplate_sizepx", 50f);
         ClassIconOverlay.NameSize      = _cfg.Get<float>("minimalnameplate_namepx", 64f);
         ClassIconOverlay.MaxIcons      = (int)_cfg.Get<float>("minimalnameplate_maxicons", 100f);
         ClassIconOverlay.ShowClassIcon = _showIcon;
         ClassIconOverlay.ShowName      = _showName;
-        ClassIconOverlay.HideSelf      = _hideSelf;
+        ClassIconOverlay.ShowFriendIcon = _showFriendIcon;
+        ClassIconOverlay.ShowGuildIcon  = _showGuildIcon;
 
         NameplateIconPatch.Install(_services.Harmony.Create("nameplate"), _services.Log.Info);
         NameplateIconPatch.HidePlate = _enabled;   // hide the game's plate while our overlay is on
@@ -118,15 +121,29 @@ public sealed class Plugin : IStellarPlugin
         {
             new ToggleElement(
                 Label: () => "",
-                Get:   () => _hideSelf,
+                Get:   () => _showFriendIcon,
                 Set:   v  =>
                 {
-                    _hideSelf = v;
-                    ClassIconOverlay.HideSelf = v;
-                    _cfg.Set<bool>("minimalnameplate_hideself", v);
+                    _showFriendIcon = v;
+                    ClassIconOverlay.ShowFriendIcon = v;
+                    _cfg.Set<bool>("minimalnameplate_showfriend", v);
                     _cfg.Save();
                 }),
-            new TextElement(() => "Hide My Own Badge + Name"),
+            new TextElement(() => "Show Friend Icon"),
+        }, Gap: 6f),
+        new RowElement(new HudElement[]
+        {
+            new ToggleElement(
+                Label: () => "",
+                Get:   () => _showGuildIcon,
+                Set:   v  =>
+                {
+                    _showGuildIcon = v;
+                    ClassIconOverlay.ShowGuildIcon = v;
+                    _cfg.Set<bool>("minimalnameplate_showguild", v);
+                    _cfg.Save();
+                }),
+            new TextElement(() => "Show Guild Icon"),
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {

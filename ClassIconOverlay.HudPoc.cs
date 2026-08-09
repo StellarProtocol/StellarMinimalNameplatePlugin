@@ -33,6 +33,15 @@ internal sealed partial class ClassIconOverlay
     private static readonly int MainTexId = Shader.PropertyToID("_MainTex");
     private static readonly int ColorId   = Shader.PropertyToID("_Color");
 
+    // Relation markers: real pre-colored PNG icons (loaded once) — a heart for Friend, a shield/crest for Guild(Union).
+    // The PNGs already contain their own colors + transparency, so they draw UNTINTED (Color.white; _Color would
+    // multiply and distort them).
+    private Texture2D? _friendTex, _unionTex;
+
+    // Reference name-line height (px) the relation markers are sized to. Constant so every player's marker is the
+    // SAME size (the per-name baked texture height nt.h varies with the glyphs); still scales via worldPerPx.
+    private const float MarkerRefPx = 58f;
+
     private bool EnsureHudPass()
     {
         if (_hudPassResolved) return _hudPassOk;
@@ -167,6 +176,39 @@ internal sealed partial class ClassIconOverlay
                 float nW = nt.w * worldPerPx, nH = nt.h * worldPerPx;
                 // Under the badge (worldH*0.5 + gap + nH*0.5) when the icon is shown, else centered on the head anchor.
                 var namePos = showIcon ? badgeCenter - up * (worldH * 0.625f + nH * 0.5f) : anchor;
+
+                // Relation markers IN FRONT OF the name: Friend heart and/or Guild(Union) shield. The name stays
+                // centered on the head anchor; markers hang off to the LEFT of the name's left edge (they do NOT shift
+                // the name). (Detection fails open → no marker; see ClassIconOverlay.Relation.cs.)
+                bool fr = ShowFriendIcon && IsFriendPlayer(uuid);
+                bool gd = ShowGuildIcon  && IsGuildPlayer(uuid);
+                int count = (fr ? 1 : 0) + (gd ? 1 : 0);
+                if (count > 0)
+                {
+                    var right = camRot * Vector3.right;
+                    float markerH = MarkerRefPx * worldPerPx;             // constant reference height → same size for every player
+                                                                          // (worldPerPx already scales by distance + NameSize; independent of the per-name baked nt.h)
+                    float gap = markerH * 0.18f;
+                    Vector3 nameLeft = namePos - right * (nW * 0.5f);      // name's left edge (name stays centered)
+                    // Order left→right: Friend, Guild, name (guild adjacent to the name). Walk right→left.
+                    // Each marker uses the common height; WIDTH follows the texture aspect so the wide heart and tall shield read equal.
+                    float cursor = -gap;
+                    if (gd)
+                    {
+                        var t = UnionTex(); float w = markerH * MarkerAspect(t);
+                        cursor -= w * 0.5f;
+                        DrawMarker(nameLeft + right * cursor, camRot, w, markerH, t, Color.white);
+                        cursor -= w * 0.5f + gap;
+                    }
+                    if (fr)
+                    {
+                        var t = FriendTex(); float w = markerH * MarkerAspect(t);
+                        cursor -= w * 0.5f;
+                        DrawMarker(nameLeft + right * cursor, camRot, w, markerH, t, Color.white);
+                        cursor -= w * 0.5f + gap;
+                    }
+                }
+
                 var nc = IsDead(uuid) ? DeadNameColor : (IsParty(uuid) ? PartyNameColor : OutsideNameColor);
                 _mpb!.Clear();
                 _mpb.SetTexture(MainTexId, nt.tex);
@@ -318,6 +360,58 @@ internal sealed partial class ClassIconOverlay
         return m;
     }
 
+    // Texture aspect (width/height) for sizing a marker quad; falls back to 1 (square) if the texture is missing.
+    private static float MarkerAspect(Texture2D? t) => (t != null && t.height > 0) ? (float)t.width / t.height : 1f;
+
+    // Draw one relation marker, billboarded with camRot, at an explicit width×height (width follows the texture aspect
+    // so the wide heart and tall shield read equal). The relation PNGs are pre-colored so callers pass Color.white
+    // (no tint); the tint param stays for generality.
+    private void DrawMarker(Vector3 center, Quaternion rot, float width, float height, Texture2D? tex, Color tint)
+    {
+        if (_hudCmd == null || _hudMat == null || tex == null) return;
+        _mpb!.Clear();
+        _mpb.SetTexture(MainTexId, tex);
+        _mpb.SetColor(ColorId, tint);
+        _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(center, rot, new Vector3(width, height, 1f)), _hudMat, 0, 0, _mpb);
+    }
+
+    private Texture2D? FriendTex() => _friendTex ??= LoadMarkerPng("friend-icon.png", "friend");
+    private Texture2D? UnionTex()  => _unionTex  ??= LoadMarkerPng("guild-icon.png", "guild");
+
+    // Load a pre-colored relation marker from an embedded PNG into a mip-mapped Texture2D (cached by the caller). The
+    // PNG carries its own colors + alpha, so it draws untinted. Fails safe: on a missing stream or decode failure, logs
+    // and returns null (DrawMarker no-ops on a null texture → simply no marker, never a crash).
+    private Texture2D? LoadMarkerPng(string fileName, string label)
+    {
+        try
+        {
+            byte[]? bytes;
+            using (var s = typeof(ClassIconOverlay).Assembly.GetManifestResourceStream("Stellar.MinimalNameplate." + fileName))
+            {
+                if (s == null) { _services.Log.Warning($"[MinimalNameplate] {label} icon load failed"); return null; }
+                using var ms = new System.IO.MemoryStream();
+                s.CopyTo(ms);
+                bytes = ms.ToArray();
+            }
+
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: true)
+            { hideFlags = HideFlags.HideAndDontSave, wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            if (!ImageConversion.LoadImage(tex, bytes))
+            {
+                _services.Log.Warning($"[MinimalNameplate] {label} icon load failed");
+                UnityEngine.Object.Destroy(tex);
+                return null;
+            }
+            tex.filterMode = FilterMode.Bilinear;   // LoadImage can reset sampler state; mips come from mipChain:true
+            return tex;
+        }
+        catch (Exception ex)
+        {
+            _services.Log.Warning($"[MinimalNameplate] {label} icon load failed: {ex.Message}");
+            return null;
+        }
+    }
+
     private void DestroyHudPoc()
     {
         try { _hudCmd?.Dispose(); } catch { }
@@ -326,6 +420,8 @@ internal sealed partial class ClassIconOverlay
         if (_bgQuad != null) { try { UnityEngine.Object.Destroy(_bgQuad); } catch { } _bgQuad = null; }
         foreach (var m in _iconQuads.Values) { try { UnityEngine.Object.Destroy(m); } catch { } }
         _iconQuads.Clear();
+        if (_friendTex != null) { try { UnityEngine.Object.Destroy(_friendTex); } catch { } _friendTex = null; }
+        if (_unionTex != null) { try { UnityEngine.Object.Destroy(_unionTex); } catch { } _unionTex = null; }
         ClearNameTex();
         _mpb = null;
     }

@@ -23,6 +23,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources/nameplate-icon.png" LogicalName="Stellar.MinimalNameplate.nameplate-icon.png" />
+    <EmbeddedResource Include="Resources/friend-icon.png" LogicalName="Stellar.MinimalNameplate.friend-icon.png" />
+    <EmbeddedResource Include="Resources/guild-icon.png" LogicalName="Stellar.MinimalNameplate.guild-icon.png" />
   </ItemGroup>
 
   <ItemGroup>

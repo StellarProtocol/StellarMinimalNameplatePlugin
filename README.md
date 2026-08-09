@@ -42,7 +42,6 @@ Open the **Nameplates** entry from the plugin launcher (window lives under *Tool
 | **Enable Minimal Nameplate (Disable Game Nameplate)** | Master toggle. Off by default — turn on to replace the game plate with the overlay. |
 | **Show Class Icon (badge)** | Draw the class badge. |
 | **Show Player Name (under badge)** | Draw the player's name. |
-| **Hide My Own Badge + Name** | Don't draw your own overlay (others still shown). |
 | **Badge Size** | On-screen badge size (16–160 px at the reference distance). |
 | **Name Size** | On-screen name size (16–160 px), independent of the badge. |
 
