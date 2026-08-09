@@ -37,7 +37,8 @@ internal sealed partial class ClassIconOverlay
     public static float RefDistance     = 15f;      // camera distance (m) at which the badge is exactly SizePixels
     public static bool  ShowClassIcon   = true;     // render the class badge (icon); independent of the name
     public static bool  ShowName        = false;    // render the player's name (under the badge, or on the head if no badge)
-    public static bool  HideSelf        = false;    // don't show my OWN badge + name (others still shown)
+    public static bool  ShowFriendIcon  = true;     // draw the Friend (heart) marker in front of the name (needs ShowName)
+    public static bool  ShowGuildIcon   = true;     // draw the Guild(Union) (shield) marker in front of the name (needs ShowName)
     public static float NameSize        = 64f;      // name on-screen size, independent of the icon Size-px slider
     private const float RefScreenHeight = 1440f;    // sizes tuned at 1440p; scaled by Screen.height/this
     private float       _resScale       = 1f;       // Screen.height / RefScreenHeight, recomputed per frame
@@ -195,6 +196,7 @@ internal sealed partial class ClassIconOverlay
                 {
                     if (w >= MaxIcons) break;
                     if (NameplateIconPatch.IsPlateHiddenByGame(uuid)) continue;   // tag/hide-and-seek, disappear, dialog, …
+                    if (IsHiddenByHideSeek(uuid)) continue;   // hide-and-seek hides the MODEL (not the HUD plate) — mirror it
                     if (!GameShowsPlateFor(uuid)) continue;   // honor the game's per-type nameplate setting
                     if (!TryGetHeadWorld(uuid, out var head)) continue;
                     float headOff = IsDead(uuid) ? DeadHeadOffset : WorldHeadOffset;
@@ -210,7 +212,7 @@ internal sealed partial class ClassIconOverlay
                 if (_diagTimer >= 5.0)
                 {
                     _diagTimer = 0;
-                    _services.Log.Info($"[MinimalNameplate] players={_players.Count} shown={w} hudShown={hudShown} name={ShowName} hideSelf={HideSelf}");
+                    _services.Log.Info($"[MinimalNameplate] players={_players.Count} shown={w} hudShown={hudShown} name={ShowName}");
                 }
             }
         }
@@ -232,7 +234,7 @@ internal sealed partial class ClassIconOverlay
         var scored = new List<(long uuid, int prof, float dist)>();
 
         var local = _services.CombatSnapshot.LocalEntityId;
-        int selfProf = (!HideSelf && local.Value != 0) ? ResolveProfession(local.Value) : 0;
+        int selfProf = local.Value != 0 ? ResolveProfession(local.Value) : 0;
         if (selfProf > 0) scored.Add((local.Value, selfProf, PlayerDist(local.Value, camPos)));
 
         try
@@ -383,8 +385,8 @@ internal sealed partial class ClassIconOverlay
         _attrApiResolved = true;
         try
         {
-            var entT = FindType("Panda.ZGame.ZEntity");
-            var attrEnum = FindType("Zproto.EAttrType");
+            var entT = StellarInterop.FindType("Panda.ZGame.ZEntity");
+            var attrEnum = StellarInterop.FindType("Zproto.EAttrType");
             if (entT != null && attrEnum != null)
             {
                 foreach (var m in entT.GetMethods(BindingFlags.Public | BindingFlags.Instance))
@@ -664,10 +666,10 @@ internal sealed partial class ClassIconOverlay
         _resolved = true;
         try
         {
-            var entMgr = FindType("Panda.ZGame.ZEntityMgr");
-            var camMgr = FindType("Panda.ZGame.CameraManager");
-            var ent    = FindType("Panda.ZGame.ZEntity");
-            var model  = FindType("Panda.ZGame.ZModel");
+            var entMgr = StellarInterop.FindType("Panda.ZGame.ZEntityMgr");
+            var camMgr = StellarInterop.FindType("Panda.ZGame.CameraManager");
+            var ent    = StellarInterop.FindType("Panda.ZGame.ZEntity");
+            var model  = StellarInterop.FindType("Panda.ZGame.ZModel");
             if (entMgr == null || camMgr == null || ent == null || model == null)
             {
                 _services.Log.Warning($"[MinimalNameplate] type resolve failed entMgr={entMgr != null} cam={camMgr != null} ent={ent != null} model={model != null}");
@@ -688,7 +690,7 @@ internal sealed partial class ClassIconOverlay
 
             try
             {
-                var hudCompType = FindType("Panda.ZGame.HudComp");
+                var hudCompType = StellarInterop.FindType("Panda.ZGame.HudComp");
                 if (hudCompType != null)
                 {
                     foreach (var m in model.GetMethods(BindingFlags.Public | BindingFlags.Instance))
@@ -710,15 +712,5 @@ internal sealed partial class ClassIconOverlay
             _services.Log.Warning($"[MinimalNameplate] Resolve error: {ex.Message}");
             _resolveFailed = true; return false;
         }
-    }
-
-    private static Type? FindType(string fullName)
-    {
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            var t = asm.GetType(fullName);
-            if (t is not null) return t;
-        }
-        return null;
     }
 }

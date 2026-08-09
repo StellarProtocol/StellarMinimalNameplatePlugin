@@ -10,19 +10,21 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>Stellar.MinimalNameplate</RootNamespace>
     <AssemblyName>Stellar.MinimalNameplate</AssemblyName>
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
     <Deterministic>true</Deterministic>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Stellar.Abstractions"       Version="1.2.0" />
-    <PackageReference Include="Stellar.PluginContracts"    Version="1.1.1" />
-    <PackageReference Include="Stellar.Plugin.InteropRefs" Version="1.1.1" />
+    <PackageReference Include="Stellar.Abstractions"       Version="2.0.0" />
+    <PackageReference Include="Stellar.PluginContracts"    Version="2.0.0" />
+    <PackageReference Include="Stellar.Plugin.InteropRefs" Version="2.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Resources/nameplate-icon.png" LogicalName="Stellar.MinimalNameplate.nameplate-icon.png" />
+    <EmbeddedResource Include="Resources/friend-icon.png" LogicalName="Stellar.MinimalNameplate.friend-icon.png" />
+    <EmbeddedResource Include="Resources/guild-icon.png" LogicalName="Stellar.MinimalNameplate.guild-icon.png" />
   </ItemGroup>
 
   <ItemGroup>

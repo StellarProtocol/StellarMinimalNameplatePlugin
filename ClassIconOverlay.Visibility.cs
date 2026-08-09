@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using Stellar.Abstractions.Services;
 
 namespace Stellar.MinimalNameplate;
 
@@ -30,7 +31,7 @@ internal sealed partial class ClassIconOverlay
         _hudMgrResolved = true;
         try
         {
-            var t = FindType("Panda.Hud.HudMgr");
+            var t = StellarInterop.FindType("Panda.Hud.HudMgr");
             if (t == null) { _services.Log.Warning("[MinimalNameplate] hud-vis: HudMgr not found — visibility mirror off"); return; }
 
             const BindingFlags pubInst = BindingFlags.Public | BindingFlags.Instance;
@@ -40,8 +41,8 @@ internal sealed partial class ClassIconOverlay
             _fiHudDisabledFlag    = t.GetField("hudDisabledFlag_", BindingFlags.NonPublic | BindingFlags.Instance);
             _miGetHudSettingsShow = t.GetMethod("GetHudSettingsShow", pubInst);
 
-            var entEnum  = FindType("Panda.ZGame.EHudSettingEntityType");
-            var funcEnum = FindType("Panda.ZGame.EHudSettingFuncType");
+            var entEnum  = StellarInterop.FindType("Panda.ZGame.EHudSettingEntityType");
+            var funcEnum = StellarInterop.FindType("Panda.ZGame.EHudSettingFuncType");
             if (entEnum  != null) { _entPlayer = Enum.ToObject(entEnum, 1); _entChar = Enum.ToObject(entEnum, 2); }
             if (funcEnum != null) _funcName = Enum.ToObject(funcEnum, 2);
 
@@ -92,5 +93,81 @@ internal sealed partial class ClassIconOverlay
             return _miGetHudSettingsShow.Invoke(inst, new object[] { ent, _funcName }) is not bool b || b;
         }
         catch { return true; }
+    }
+
+    // (3) Hide-and-seek (TAG) MODEL-visibility mirror — a SEPARATE path from the HUD-source mirror in
+    // NameplateIconPatch.HudVisible.cs. Hide-and-seek does NOT toggle a per-entity HUD plate source
+    // (EHudVisibleSource.EHideSeek=12 is effectively never set by the game), and the ECS HideSeekComponent camp reads
+    // come back empty at runtime. The observable mechanic: a hider TRANSFORMS INTO A PROP, which swaps the entity's
+    // active model — ZEntity.ModelId (active) diverges from ZEntity.MainModelId (base). Both getters are
+    // client-readable for other players, so we suppress the badge when the two ids differ.
+    // ZHideSeekUtils.IsHideSeekScene() gates the whole thing so all model work is skipped outside hide-seek.
+    // Fail-open everywhere (unresolved reflection or a lookup miss → draw), matching this file's convention. See
+    // Knowledge Base\Nameplate-HUD.md.
+    private bool          _hideSeekResolved;
+    private MethodInfo?    _miIsHideSeekScene;       // ZHideSeekUtils.IsHideSeekScene() — static bool, no args
+    private PropertyInfo?  _piModelId;                // ZEntity.ModelId (int) — currently-active model
+    private PropertyInfo?  _piMainModelId;            // ZEntity.MainModelId (int) — true base model
+
+    private void EnsureHideSeek()
+    {
+        if (_hideSeekResolved) return;
+        _hideSeekResolved = true;
+        try
+        {
+            var utils = StellarInterop.FindType("Panda.ZGame.ZHideSeekUtils");
+            if (utils != null)
+                _miIsHideSeekScene = utils.GetMethod("IsHideSeekScene",
+                    BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
+
+            var zent = StellarInterop.FindType("Panda.ZGame.ZEntity");
+            if (zent != null)
+            {
+                const BindingFlags pubInst = BindingFlags.Public | BindingFlags.Instance;
+                _piModelId     = zent.GetProperty("ModelId", pubInst);
+                _piMainModelId = zent.GetProperty("MainModelId", pubInst);
+            }
+
+            if (_miIsHideSeekScene == null || _piModelId == null || _piMainModelId == null)
+                _services.Log.Warning("[MinimalNameplate] hide-seek api incomplete — model-visibility mirror off");
+            _services.Log.Info($"[MinimalNameplate] hide-seek api: scene={_miIsHideSeekScene != null} " +
+                $"modelId={_piModelId != null} mainModelId={_piMainModelId != null}");
+        }
+        catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] hide-seek resolve failed: {ex.Message}"); }
+    }
+
+    // True for a TRANSFORMED hider during a hide-and-seek scene (active model swapped to a prop; see rationale above).
+    // FAIL-OPEN: any unresolved member, missing entity, or exception → false (draw). A miss must never suppress a badge.
+    private bool IsHiddenByHideSeek(long uuid)
+    {
+        try
+        {
+            EnsureHideSeek();
+            if (_miIsHideSeekScene == null) return false;                              // no gate → not in hide-seek → draw
+            if (_miIsHideSeekScene.Invoke(null, null) is not bool inScene || !inScene) return false;
+            if (!TryGetModelIds(uuid, out int model, out int main)) return false;
+            return model != main;   // active model swapped to a prop → transformed hider → suppress badge
+        }
+        catch { return false; }   // fail-open = draw
+    }
+
+    // Returns true if both model ids were read. modelId != mainModelId ⇒ the entity's active model was swapped (transformed into a prop).
+    private bool TryGetModelIds(long uuid, out int modelId, out int mainModelId)
+    {
+        modelId = mainModelId = int.MinValue;
+        try
+        {
+            EnsureHideSeek();
+            if (_piModelId == null || _piMainModelId == null) return false;
+            var ent = GetEntityObj(uuid);
+            if (ent == null) return false;
+            var mv = _piModelId.GetValue(ent);
+            var bv = _piMainModelId.GetValue(ent);
+            if (mv == null || bv == null) return false;
+            modelId     = Convert.ToInt32(mv);
+            mainModelId = Convert.ToInt32(bv);
+            return true;
+        }
+        catch { modelId = mainModelId = int.MinValue; return false; }   // fail-open = draw
     }
 }
