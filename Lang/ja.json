@@ -1,0 +1,12 @@
+{
+  "mn.badgeSize": "バッジサイズ",
+  "mn.enable": "ミニマルネームプレートを有効化（ゲームのネームプレートを無効化）",
+  "mn.header": "ミニマルネームプレート",
+  "mn.maxShown": "最大表示数",
+  "mn.nameSize": "名前サイズ",
+  "mn.showFriend": "フレンドアイコンを表示",
+  "mn.showGuild": "ギルドアイコンを表示",
+  "mn.showIcon": "クラスアイコン（バッジ）を表示",
+  "mn.showName": "プレイヤー名（バッジ下）を表示",
+  "mn.title": "ネームプレート"
+}

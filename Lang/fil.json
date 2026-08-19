@@ -1,0 +1,12 @@
+{
+  "mn.badgeSize": "Laki ng Badge",
+  "mn.enable": "Paganahin ang Minimal Nameplate (Huwag Paganahin ang Nameplate ng Laro)",
+  "mn.header": "Minimal Nameplate",
+  "mn.maxShown": "Max na Ipapakita",
+  "mn.nameSize": "Laki ng Pangalan",
+  "mn.showFriend": "Ipakita ang Friend Icon",
+  "mn.showGuild": "Ipakita ang Guild Icon",
+  "mn.showIcon": "Ipakita ang Class Icon (badge)",
+  "mn.showName": "Ipakita ang Pangalan ng Player (sa ilalim ng badge)",
+  "mn.title": "Nameplates"
+}

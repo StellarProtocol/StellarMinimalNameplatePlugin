@@ -10,6 +10,7 @@ public sealed class Plugin : IStellarPlugin
     public string Name => "MinimalNameplate";
 
     private readonly IPluginServices  _services;
+    private readonly ILocalization    _loc;
     private readonly IConfigSection   _cfg;
     private readonly ClassIconOverlay _overlay;
     private readonly IWindowControl   _window;
@@ -24,6 +25,7 @@ public sealed class Plugin : IStellarPlugin
     public Plugin(IPluginServices services)
     {
         _services = services;
+        _loc = services.Localization;
         _cfg = _services.Config.GetSection("settings");
 
         _enabled  = _cfg.Get<bool> ("minimalnameplate_enabled",  false);
@@ -48,7 +50,7 @@ public sealed class Plugin : IStellarPlugin
         _window = _services.Windows.Register(new WindowRegistration(
             Spec: new WindowSpec(
                 Id:          "minimalnameplate.main",
-                Title:       "Nameplates",
+                Title:       _loc.T("mn.title"),
                 DefaultRect: new WindowRect(_services.Framework.ScreenWidth - 460f, 20f, 440f, 0f),
                 Category:    WindowCategory.Tools,
                 Style:       WindowPanelStyle.GlassMenu)
@@ -60,7 +62,7 @@ public sealed class Plugin : IStellarPlugin
             OnClose: () => _window!.SetVisible(false)));
 
         _launcher = _services.Launcher.Register(new LauncherEntry(
-            Title:   "Nameplates",
+            Title:   _loc.T("mn.title"),
             IconPng: LoadIconPng(),
             IconKey: null,
             OnOpen:  () => _window.SetVisible(true))
@@ -72,7 +74,7 @@ public sealed class Plugin : IStellarPlugin
 
     private HudElement BuildRoot() => new ColumnElement(new HudElement[]
     {
-        new TextElement(() => "Minimal Nameplate", Emphasis: true),
+        new TextElement(() => _loc.T("mn.header"), Emphasis: true),
         new RowElement(new HudElement[]
         {
             new ToggleElement(
@@ -87,7 +89,7 @@ public sealed class Plugin : IStellarPlugin
                     _cfg.Set<bool>("minimalnameplate_enabled", v);
                     _cfg.Save();
                 }),
-            new TextElement(() => "Enable Minimal Nameplate (Disable Game Nameplate)"),
+            new TextElement(() => _loc.T("mn.enable")),
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {
@@ -101,7 +103,7 @@ public sealed class Plugin : IStellarPlugin
                     _cfg.Set<bool>("minimalnameplate_showicon", v);
                     _cfg.Save();
                 }),
-            new TextElement(() => "Show Class Icon (badge)"),
+            new TextElement(() => _loc.T("mn.showIcon")),
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {
@@ -115,7 +117,7 @@ public sealed class Plugin : IStellarPlugin
                     _cfg.Set<bool>("minimalnameplate_showname", v);
                     _cfg.Save();
                 }),
-            new TextElement(() => "Show Player Name (under badge)"),
+            new TextElement(() => _loc.T("mn.showName")),
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {
@@ -129,7 +131,7 @@ public sealed class Plugin : IStellarPlugin
                     _cfg.Set<bool>("minimalnameplate_showfriend", v);
                     _cfg.Save();
                 }),
-            new TextElement(() => "Show Friend Icon"),
+            new TextElement(() => _loc.T("mn.showFriend")),
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {
@@ -143,11 +145,11 @@ public sealed class Plugin : IStellarPlugin
                     _cfg.Set<bool>("minimalnameplate_showguild", v);
                     _cfg.Save();
                 }),
-            new TextElement(() => "Show Guild Icon"),
+            new TextElement(() => _loc.T("mn.showGuild")),
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {
-            new CellElement(new TextElement(() => "Badge Size", Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
+            new CellElement(new TextElement(() => _loc.T("mn.badgeSize"), Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
             new CellElement(new SliderElement(
                 Get: () => ClassIconOverlay.SizePixels,
                 Set: v  => { ClassIconOverlay.SizePixels = v; _cfg.Set<float>("minimalnameplate_sizepx", v); _cfg.Save(); },
@@ -156,7 +158,7 @@ public sealed class Plugin : IStellarPlugin
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {
-            new CellElement(new TextElement(() => "Name Size", Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
+            new CellElement(new TextElement(() => _loc.T("mn.nameSize"), Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
             new CellElement(new SliderElement(
                 Get: () => ClassIconOverlay.NameSize,
                 Set: v  => { ClassIconOverlay.NameSize = v; _cfg.Set<float>("minimalnameplate_namepx", v); _cfg.Save(); },
@@ -165,7 +167,7 @@ public sealed class Plugin : IStellarPlugin
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {
-            new CellElement(new TextElement(() => "Max Shown", Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
+            new CellElement(new TextElement(() => _loc.T("mn.maxShown"), Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
             new CellElement(new SliderElement(
                 Get: () => ClassIconOverlay.MaxIcons,
                 Set: v  =>

@@ -1,0 +1,12 @@
+{
+  "mn.badgeSize": "Badge Size",
+  "mn.enable": "Enable Minimal Nameplate (Disable Game Nameplate)",
+  "mn.header": "Minimal Nameplate",
+  "mn.maxShown": "Max Shown",
+  "mn.nameSize": "Name Size",
+  "mn.showFriend": "Show Friend Icon",
+  "mn.showGuild": "Show Guild Icon",
+  "mn.showIcon": "Show Class Icon (badge)",
+  "mn.showName": "Show Player Name (under badge)",
+  "mn.title": "Nameplates"
+}
