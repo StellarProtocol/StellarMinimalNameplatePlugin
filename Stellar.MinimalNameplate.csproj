@@ -30,6 +30,7 @@
     <EmbeddedResource Include="Lang/ja.json" LogicalName="Stellar.MinimalNameplate.Lang.ja.json" />
     <EmbeddedResource Include="Lang/th.json" LogicalName="Stellar.MinimalNameplate.Lang.th.json" />
     <EmbeddedResource Include="Lang/id.json" LogicalName="Stellar.MinimalNameplate.Lang.id.json" />
+    <EmbeddedResource Include="Lang/fil.json" LogicalName="Stellar.MinimalNameplate.Lang.fil.json" />
   </ItemGroup>
 
   <ItemGroup>
