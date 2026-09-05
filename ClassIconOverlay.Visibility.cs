@@ -80,6 +80,7 @@ internal sealed partial class ClassIconOverlay
 
     // (2) Per entity-type nameplate SETTING (options: player / other head info). Self → EPlayer, others → EChar,
     // name piece (EName). True (show) if the setting API can't be resolved.
+    private readonly object[] _hudSettingsArgs = new object[2];
     private bool GameShowsPlateFor(long uuid)
     {
         try
@@ -90,7 +91,10 @@ internal sealed partial class ClassIconOverlay
             bool self = uuid == _services.CombatSnapshot.LocalEntityId.Value;
             var ent = self ? _entPlayer : _entChar;
             if (ent == null) return true;
-            return _miGetHudSettingsShow.Invoke(inst, new object[] { ent, _funcName }) is not bool b || b;
+            // Reused buffer — this runs once per drawn badge per frame; main thread only (ClassIconOverlay.EntityRead.cs).
+            _hudSettingsArgs[0] = ent;
+            _hudSettingsArgs[1] = _funcName;
+            return _miGetHudSettingsShow.Invoke(inst, _hudSettingsArgs) is not bool b || b;
         }
         catch { return true; }
     }

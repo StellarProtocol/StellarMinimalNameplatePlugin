@@ -54,7 +54,6 @@ internal sealed partial class ClassIconOverlay
     private bool _enabled;
     private bool _subscribed;
 
-    private const int  AttrProfessionId = 220;   // broadcast attribute key holding the profession id
     private const long PlayerTypeMarker = 640;   // uuid low-16 bits == 640 → a player entity
 
     private Texture2D? _rounded; // shared rounded-rect mask for the badge bg + border
@@ -62,11 +61,7 @@ internal sealed partial class ClassIconOverlay
     // AOI player list, rebuilt on a throttle; positions update every frame.
     private readonly List<(long uuid, int prof)> _players = new();
     private double _rebuildTimer;
-
-    // Per-profession icon cache (populated by piggyback sprite scan — never the shared loader).
-    private readonly Dictionary<int, (object tex, UvRect uv)> _iconCache = new();
-    private readonly Dictionary<int, string> _profSprite = new();
-    private double _scanTimer;
+    private const double RebuildIntervalS = 0.5;
 
     public ClassIconOverlay(IPluginServices services) => _services = services;
 
@@ -168,18 +163,7 @@ internal sealed partial class ClassIconOverlay
             try { var ct = cam.transform; camPos = ct.position; camRot = ct.rotation; }
             catch { return; }
 
-            _rebuildTimer += dt;
-            if (_players.Count == 0 || _rebuildTimer >= 0.5)
-            {
-                _rebuildTimer = 0;
-                RebuildPlayers(camPos);
-                // Re-hide any game plates that came back via a rebuild path we don't patch (dungeons/combat).
-                if (NameplateIconPatch.HidePlate) NameplateIconPatch.ReapplyAll();
-            }
-
-            // Piggyback icon resolution: scan already-loaded sprites for any professions we still need.
-            _scanTimer += dt;
-            if (_scanTimer >= 1.0 && AnyUncached()) { _scanTimer = 0; ScanSprites(); }
+            TickThrottles(dt, camPos);
 
             _resScale = Mathf.Max(Screen.height, 1) / RefScreenHeight;
             if (!EnsureHudPass()) return;
@@ -222,6 +206,30 @@ internal sealed partial class ClassIconOverlay
         }
     }
 
+    // 2 Hz housekeeping, split out of OnUpdate: refresh the tracked-player list, then (throttled + backed off) look
+    // for class-icon sprites we still need.
+    //
+    // The rebuild timer is STRICT. It used to read `_players.Count == 0 || _rebuildTimer >= 0.5`, so an EMPTY AOI
+    // (solo zone, loading screen, or any frame where nothing resolved) re-ran the whole entity-dictionary reflection
+    // walk EVERY FRAME instead of twice a second. Cost of the fix: first population is at most 0.5 s late.
+    private void TickThrottles(float dt, Vector3 camPos)
+    {
+        _rebuildTimer += dt;
+        if (_rebuildTimer >= RebuildIntervalS)
+        {
+            _rebuildTimer = 0;
+            RebuildPlayers(camPos);
+            // Re-hide any game plates that came back via a rebuild path we don't patch (dungeons/combat).
+            if (NameplateIconPatch.HidePlate) NameplateIconPatch.ReapplyAll();
+        }
+
+        // Piggyback icon resolution: scan already-loaded sprites for any professions we still need. The interval backs
+        // off and each profession is memo'd after a few fruitless scans, so an icon that never loads can no longer pin
+        // a full loaded-object scan at 1 Hz for the whole session — see ClassIconOverlay.Icons.cs.
+        _scanTimer += dt;
+        if (_scanTimer >= ScanDelaySeconds && AnyUncached()) { _scanTimer = 0; ScanSprites(); }
+    }
+
     // Every AOI player (uuid low-16 == 640) with a resolvable profession, scored by camera distance. Throttled — not
     // called every frame. When more players are present than we draw (MaxIcons), the NEAREST win: a raid/crowd no
     // longer arbitrarily drops whoever enumerated first. (The old uuid-order + 40 cap left far-AND-near players blank,
@@ -229,6 +237,7 @@ internal sealed partial class ClassIconOverlay
     private void RebuildPlayers(Vector3 camPos)
     {
         _players.Clear();
+        _deadCache.Clear();   // dead state is resolved at most once per uuid per rebuild — ClassIconOverlay.EntityRead.cs
         if (!Resolve()) return;
 
         var scored = new List<(long uuid, int prof, float dist)>();
@@ -263,60 +272,12 @@ internal sealed partial class ClassIconOverlay
         // Nearest first so the per-frame MaxIcons draw budget goes to the closest (most relevant) players; ties broken
         // by uuid for a stable order (entityDict order can shuffle, briefly swapping which class a badge shows).
         scored.Sort((a, b) => a.dist != b.dist ? a.dist.CompareTo(b.dist) : a.uuid.CompareTo(b.uuid));
-        foreach (var s in scored) _players.Add((s.uuid, s.prof));
+        foreach (var s in scored) { _players.Add((s.uuid, s.prof)); NoteProfession(s.prof); }
     }
 
     // Camera distance to a player's head anchor; unresolvable (out of AOI / model unloaded) sorts last.
     private float PlayerDist(long uuid, Vector3 camPos)
         => TryGetHeadWorld(uuid, out var h) ? Vector3.Distance(camPos, h) : float.MaxValue;
-
-    private bool AnyUncached()
-    {
-        foreach (var (_, prof) in _players) if (!_iconCache.ContainsKey(prof)) return true;
-        return false;
-    }
-
-    // Piggyback: find each needed profession's sprite among already-loaded sprites. We NEVER call the shared async
-    // loader, so other plugins' icons are unaffected.
-    private void ScanSprites()
-    {
-        try
-        {
-            var needed = new Dictionary<string, int>();
-            foreach (var (_, prof) in _players)
-            {
-                if (_iconCache.ContainsKey(prof)) continue;
-                if (!_profSprite.TryGetValue(prof, out var nm))
-                {
-                    try { var ip = _services.GameData.Combat.GetProfession(prof)?.IconPath; nm = string.IsNullOrEmpty(ip) ? null! : LastSeg(ip!); }
-                    catch { nm = null!; }
-                    if (!string.IsNullOrEmpty(nm)) _profSprite[prof] = nm;
-                }
-                if (!string.IsNullOrEmpty(nm)) needed[nm] = prof;
-            }
-            if (needed.Count == 0) return;
-
-            var all = Resources.FindObjectsOfTypeAll<Sprite>();
-            int scanned = all?.Length ?? 0, matched = 0;
-            for (int i = 0; i < scanned; i++)
-            {
-                var s = all![i];
-                if (s == null) continue;
-                if (!needed.TryGetValue(s.name, out var prof) || _iconCache.ContainsKey(prof)) continue;
-                var tex = s.texture;
-                if (tex == null) continue;
-                float tw = tex.width, th = tex.height;
-                if (tw <= 0 || th <= 0) continue;
-                var r = s.textureRect;
-                _iconCache[prof] = (tex, new UvRect(r.x / tw, r.y / th, r.width / tw, r.height / th));
-                matched++;
-            }
-            if (matched > 0 && Diag) _services.Log.Info($"[MinimalNameplate] sprite scan: matched={matched} cached={_iconCache.Count} needed={needed.Count}");
-        }
-        catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] ScanSprites error: {ex.Message}"); }
-    }
-
-    private static string LastSeg(string p) { int i = p.LastIndexOf('/'); return i < 0 ? p : p.Substring(i + 1); }
 
     // Is this player in my party? (self counts as party.) Matched by CharId = uuid >> 16.
     private bool IsParty(long uuid)
@@ -331,202 +292,6 @@ internal sealed partial class ClassIconOverlay
     private static readonly Color PartyNameColor   = new Color(0.45f, 0.90f, 1.00f, 1f); // cyan — party/self
     private static readonly Color OutsideNameColor = Color.white;                        // white — not in party
     private static readonly Color DeadNameColor    = new Color(1.00f, 0.25f, 0.25f, 1f); // red — dead
-
-    private const int AttrDeadType = 78;     // EAttrType.AttrDeadType
-    private const int AttrHpId      = 11310; // EAttrType.AttrHp
-    private const int AttrMaxHpId   = 11320; // EAttrType.AttrMaxHp
-
-    // Dead detection. PRIMARY is a LIVE read off the ZEntity (GetAttr<long>(AttrHp/AttrMaxHp)) — the entity's own
-    // attribute store, which updates on revive (unlike the EntityDetail snapshot, stale at dt=2 / hp stripped).
-    private bool IsDead(long uuid)
-    {
-        if (TryLiveDead(uuid, out var live)) return live;
-        try
-        {
-            var attrs = _services.EntityDetail.GetAttributes(new EntityId(uuid));
-            if (attrs != null)
-            {
-                if (attrs.TryGetValue(AttrHpId, out var hp)) return hp <= 0;
-                if (attrs.TryGetValue(AttrDeadType, out var dt)) return dt > 0;
-            }
-        }
-        catch { }
-        try { var v = _services.CombatLookup.GetVitals(new EntityId(uuid)); return v.IsKnown && v.MaxHp > 0 && v.Hp <= 0; }
-        catch { return false; }
-    }
-
-    private bool TryLiveDead(long uuid, out bool dead)
-    {
-        dead = false;
-        if (!EnsureAttrApi()) return false;
-        var ent = GetEntityObj(uuid);
-        if (ent == null) return false;
-        try
-        {
-            long maxhp = Convert.ToInt64(_miGetAttrLong!.Invoke(ent, new object[] { _attrMaxHpBox!, true }));
-            if (maxhp <= 0) return false;
-            long hp = Convert.ToInt64(_miGetAttrLong!.Invoke(ent, new object[] { _attrHpBox!, true }));
-            dead = hp <= 0;
-            return true;
-        }
-        catch { return false; }
-    }
-
-    // ZEntity.GetAttr<long>(EAttrType, bool checkInherit) — resolved once, closed over long, with boxed enum keys.
-    private MethodInfo? _miGetAttrLong;
-    private object?     _attrHpBox;
-    private object?     _attrMaxHpBox;
-    private object?     _attrProfBox;
-    private bool        _attrApiResolved;
-    private bool        _attrApiOk;
-    private bool EnsureAttrApi()
-    {
-        if (_attrApiResolved) return _attrApiOk;
-        _attrApiResolved = true;
-        try
-        {
-            var entT = StellarInterop.FindType("Panda.ZGame.ZEntity");
-            var attrEnum = StellarInterop.FindType("Zproto.EAttrType");
-            if (entT != null && attrEnum != null)
-            {
-                foreach (var m in entT.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                {
-                    if (m.Name != "GetAttr" || !m.IsGenericMethodDefinition) continue;
-                    var ps = m.GetParameters();
-                    if (ps.Length == 2 && ps[0].ParameterType == attrEnum && ps[1].ParameterType == typeof(bool))
-                    { _miGetAttrLong = m.MakeGenericMethod(typeof(long)); break; }
-                }
-                _attrHpBox    = Enum.ToObject(attrEnum, AttrHpId);
-                _attrMaxHpBox = Enum.ToObject(attrEnum, AttrMaxHpId);
-                _attrProfBox  = Enum.ToObject(attrEnum, AttrProfessionId);
-                _attrApiOk    = _miGetAttrLong != null && _attrHpBox != null && _attrMaxHpBox != null;
-            }
-        }
-        catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] live-attr api resolve failed: {ex.Message}"); _attrApiOk = false; }
-        _services.Log.Info($"[MinimalNameplate] live-attr api ok={_attrApiOk}");
-        return _attrApiOk;
-    }
-
-    private object? GetEntityObj(long uuid)
-    {
-        try
-        {
-            if (!Resolve()) return null;
-            var mgr = _piEntMgrInstance!.GetValue(null);
-            return mgr == null ? null : _miGetEntity!.Invoke(mgr, new object[] { uuid });
-        }
-        catch { return null; }
-    }
-
-    // Player name: self→PlayerState.Name, party→PartyRoster, then CombatLookup.GetEntityName; nameplate ValidText
-    // is a last fallback. Cached per uuid.
-    private readonly Dictionary<long, string> _nameCache = new();
-    private string ResolveName(long uuid)
-    {
-        if (_nameCache.TryGetValue(uuid, out var c) && !string.IsNullOrEmpty(c)) return c;
-        string? n = null;
-        try
-        {
-            if (uuid == _services.CombatSnapshot.LocalEntityId.Value)
-            {
-                var ps = _services.PlayerState.Name;
-                if (!string.IsNullOrEmpty(ps)) n = ps;
-            }
-            if (string.IsNullOrEmpty(n))
-            {
-                long charId = uuid >> 16;
-                foreach (var m in _services.PartyRoster.Members)
-                    if (m.CharId == charId && !string.IsNullOrEmpty(m.Name)) { n = m.Name; break; }
-            }
-            if (string.IsNullOrEmpty(n))
-            {
-                var el = _services.CombatLookup.GetEntityName(new EntityId(uuid));
-                if (!string.IsNullOrEmpty(el)) n = el;
-            }
-        }
-        catch { }
-        if (string.IsNullOrEmpty(n) && NameplateIconPatch.Names.TryGetValue(uuid, out var pn)) n = pn;
-        if (!string.IsNullOrEmpty(n)) { _nameCache[uuid] = n!; return n!; }
-        return _nameCache.TryGetValue(uuid, out var c2) ? c2 : "";
-    }
-
-    // Profession for any player. Players can SWITCH class, so the cache is not frozen — a NEW live value replaces the
-    // cached one after it persists across a couple of rebuilds (ProfConfirmCount): lets real switches through (~1s)
-    // and rejects a 1-sample transient wrong read. A live value of 0 (e.g. mounted) keeps the last known.
-    private readonly Dictionary<long, int> _profCache = new();
-    private readonly Dictionary<long, (int prof, int count)> _profPending = new();
-    private const int ProfConfirmCount = 2;
-    private int ResolveProfession(long uuid)
-    {
-        int live = ResolveProfessionLive(uuid);
-        _profCache.TryGetValue(uuid, out var cached);
-
-        if (live <= 0) { _profPending.Remove(uuid); return cached; }
-        if (live == cached) { _profPending.Remove(uuid); return cached; }
-        if (cached == 0) { _profCache[uuid] = live; _profPending.Remove(uuid); return live; }
-
-        int count = (_profPending.TryGetValue(uuid, out var pv) && pv.prof == live) ? pv.count + 1 : 1;
-        if (count >= ProfConfirmCount) { _profCache[uuid] = live; _profPending.Remove(uuid); return live; }
-        _profPending[uuid] = (live, count);
-        return cached;
-    }
-
-    private int ResolveProfessionLive(long uuid)
-    {
-        if (TryLiveProfession(uuid, out var lp) && lp > 0) return lp;
-
-        if (uuid == _services.CombatSnapshot.LocalEntityId.Value)
-        {
-            int sp = _services.PlayerState.Profession;
-            if (sp > 0) return sp;
-        }
-        long charId = uuid >> 16;
-        foreach (var m in _services.PartyRoster.Members)
-            if (m.CharId == charId && m.Profession > 0) return m.Profession;
-
-        try
-        {
-            var attrs = _services.EntityDetail.GetAttributes(new EntityId(uuid));
-            if (attrs != null && attrs.TryGetValue(AttrProfessionId, out var p) && p > 0) return (int)p;
-        }
-        catch { }
-        return 0;
-    }
-
-    private bool TryLiveProfession(long uuid, out int prof)
-    {
-        prof = 0;
-        if (!EnsureAttrApi() || _attrProfBox == null) return false;
-        var ent = GetEntityObj(uuid);
-        if (ent == null) return false;
-        try { prof = (int)Convert.ToInt64(_miGetAttrLong!.Invoke(ent, new object[] { _attrProfBox, true })); return prof > 0; }
-        catch { return false; }
-    }
-
-    private static List<object> WalkIl2Cpp(object collection)
-    {
-        var res = new List<object>();
-        var getEnum = FindNoArg(collection.GetType(), "GetEnumerator");
-        var en = getEnum?.Invoke(collection, null);
-        if (en == null) return res;
-        var enT  = en.GetType();
-        var move = FindNoArg(enT, "MoveNext");
-        var cur  = enT.GetProperty("Current");
-        if (move == null || cur == null) return res;
-        while ((bool)move.Invoke(en, null)!)
-        {
-            var v = cur.GetValue(en);
-            if (v != null) res.Add(v);
-        }
-        return res;
-    }
-
-    private static MethodInfo? FindNoArg(Type t, string name)
-    {
-        foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-            if (m.Name == name && m.GetParameters().Length == 0) return m;
-        return null;
-    }
 
     private static Font? _font;
     private static Font? NameFont()
@@ -601,6 +366,7 @@ internal sealed partial class ClassIconOverlay
     private bool          _hudPosFailed;
 
     private const float FallbackHeadHeight = 1.9f;
+    private readonly object[] _headArgs = new object[1];   // TryGetHeadWorld runs per tracked player per frame
 
     // A STABLE anchor above the head: model-root Position + HUD height (NOT the animated head bone, so the badge
     // follows movement/jumps but doesn't bob). Position tracks to the model draw distance — unlike GetHudPos, which
@@ -612,7 +378,8 @@ internal sealed partial class ClassIconOverlay
 
         var mgr = _piEntMgrInstance!.GetValue(null);
         if (mgr == null) return false;
-        var ent = _miGetEntity!.Invoke(mgr, new object[] { uuid });
+        _headArgs[0] = uuid;                       // reused buffer — main thread only, see ClassIconOverlay.EntityRead.cs
+        var ent = _miGetEntity!.Invoke(mgr, _headArgs);
         if (ent == null) return false;
         var model = _piModel!.GetValue(ent);
         if (model == null) return false;

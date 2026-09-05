@@ -79,9 +79,14 @@ Settings persist to `stellar.minimalnameplate.config.json` in the game directory
 | File | Responsibility |
 |---|---|
 | `Plugin.cs` | Plugin entry: config, the settings window, launcher entry. |
-| `ClassIconOverlay.cs` | Overlay core — AOI player scan, head positions, dead/profession resolution, per-frame update. |
+| `ClassIconOverlay.cs` | Overlay core — AOI player scan, head positions, throttles, per-frame update. |
+| `ClassIconOverlay.EntityRead.cs` | Live `ZEntity` reads (profession / HP / dead) + the entity-dictionary walk, with the attribute-type and reuse perf contract. |
+| `ClassIconOverlay.Icons.cs` | Piggyback class-icon sprite resolution — negative memo + scan backoff. |
+| `ClassIconOverlay.Relation.cs` | Friend / guild (Union) relationship lookups for the name markers. |
 | `ClassIconOverlay.HudPoc.cs` | Draws the badge + name into the game's `HudRenderPass` (crisp + depth-occluded). |
 | `ClassIconOverlay.Visibility.cs` | Global + per-type nameplate-visibility mirror (`HudMgr.IsEnabled` / `GetHudSettingsShow`). |
+| `ClassIconRules.cs` | Pure decision rules (attribute CLR type, sprite-scan backoff) — unit-tested. |
+| `Stellar.MinimalNameplate.Tests/` | xUnit pins for `ClassIconRules`. Run with `dotnet test Stellar.MinimalNameplate.Tests`. |
 | `NameplateIconPatch.cs` | Hides the game's own player plate (Harmony patches on `HudComp`). |
 | `NameplateIconPatch.HudVisible.cs` | Tracks per-entity hides (tag/hide-and-seek, disappear, …) by patching `HudUtility` setters. |
 
@@ -98,6 +103,38 @@ state dump and sprite-scan logging. One-time load/resolve lines (`resolve ok=`, 
   from the model anchor and billboarded toward the camera; size is dampened by distance to match the game's falloff.
 - Class/profession icons are found among already-loaded sprites (a piggyback scan) rather than the shared async loader,
   so other plugins' icons are unaffected.
+
+## Release notes
+
+### 2.1.1
+
+**What changed for you:** the class badges no longer make the game stutter. While you were in the world the overlay
+was quietly triggering an error inside the game dozens of times a second — every one of those wrote a page to the
+game's own log file — and it was also re-scanning every loaded image once a second, forever, whenever a class icon
+couldn't be found. Both are fixed, so expect fewer hitches and freezes in crowded areas. Nothing about how the
+badges look or behave has changed.
+
+**Developer notes** (all four are hot-path fixes; no visual or behavioural change):
+
+1. **`ZEntity.GetAttr<T>` closed over the wrong type for the profession attribute.** `AttrProfessionId` (220) is
+   Int32-stored; the overlay read it through a `long` closure, so every call made the game `Debug.LogError` an
+   `arr type err, type=Int64, enum=AttrProfessionId` line (stack capture, main thread) *and* return 0 — meaning the
+   live profession read had never once worked and always fell through to the `EntityDetail` snapshot. Measured in the
+   owner's Player.log: 42,353 such lines in one session, ~43/s. A second `MethodInfo` closed over `int` is now used
+   for it; HP / max-HP keep the `long` closure (zero error lines named them). Pinned by `ClassIconRulesTests`.
+2. **The sprite scan had no negative memo.** `Resources.FindObjectsOfTypeAll<Sprite>()` — a full loaded-object scan
+   that materialises an Il2CppInterop wrapper per element — ran every second for the rest of the session whenever any
+   tracked profession's icon was not loaded. A profession is now dropped after 3 fruitless scans and the interval
+   backs off 1 → 2 → 5 → 10 s; a profession id never tracked before re-arms both.
+3. **Dead state is resolved at most once per uuid per rebuild (2 Hz)** instead of up to three times per drawn badge
+   per frame. A death or revive shows on the badge up to 0.5 s late — deliberate.
+4. **The AOI rebuild is strictly 2 Hz.** The old gate (`_players.Count == 0 || timer >= 0.5`) re-ran the whole
+   reflection walk of the entity dictionary *every frame* whenever the tracked list was empty. The walk also reuses
+   its result buffer and caches its enumerator members. Per-frame reflection argument arrays are hoisted into reused
+   fields (safe: every one of these paths runs only on the Unity main thread — see the perf contract comment at the
+   top of `ClassIconOverlay.EntityRead.cs`).
+
+---
 
 ## License
 

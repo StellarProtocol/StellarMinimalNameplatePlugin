@@ -229,6 +229,38 @@ internal sealed partial class ClassIconOverlay
         catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] AddHudCommandBuffer failed: {ex.InnerException?.Message ?? ex.Message}"); }
     }
 
+    // Player name: self→PlayerState.Name, party→PartyRoster, then CombatLookup.GetEntityName; nameplate ValidText
+    // is a last fallback. Cached per uuid.
+    private readonly Dictionary<long, string> _nameCache = new();
+    private string ResolveName(long uuid)
+    {
+        if (_nameCache.TryGetValue(uuid, out var c) && !string.IsNullOrEmpty(c)) return c;
+        string? n = null;
+        try
+        {
+            if (uuid == _services.CombatSnapshot.LocalEntityId.Value)
+            {
+                var ps = _services.PlayerState.Name;
+                if (!string.IsNullOrEmpty(ps)) n = ps;
+            }
+            if (string.IsNullOrEmpty(n))
+            {
+                long charId = uuid >> 16;
+                foreach (var m in _services.PartyRoster.Members)
+                    if (m.CharId == charId && !string.IsNullOrEmpty(m.Name)) { n = m.Name; break; }
+            }
+            if (string.IsNullOrEmpty(n))
+            {
+                var el = _services.CombatLookup.GetEntityName(new EntityId(uuid));
+                if (!string.IsNullOrEmpty(el)) n = el;
+            }
+        }
+        catch { }
+        if (string.IsNullOrEmpty(n) && NameplateIconPatch.Names.TryGetValue(uuid, out var pn)) n = pn;
+        if (!string.IsNullOrEmpty(n)) { _nameCache[uuid] = n!; return n!; }
+        return _nameCache.TryGetValue(uuid, out var c2) ? c2 : "";
+    }
+
     private const int NameOutlinePx = 2;
     private (Texture2D? tex, int w, int h) GetNameTex(long uuid, string text)
     {
