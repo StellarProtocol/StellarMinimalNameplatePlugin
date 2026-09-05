@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>Stellar.MinimalNameplate</RootNamespace>
     <AssemblyName>Stellar.MinimalNameplate</AssemblyName>
-    <Version>2.1.0</Version>
+    <Version>2.1.1</Version>
     <Deterministic>true</Deterministic>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
@@ -35,6 +35,9 @@
 
   <ItemGroup>
     <Compile Remove="resources/**" />
+    <!-- The unit-test project lives inside the plugin dir and compiles the pure-BCL rule sources itself; keep its
+         own sources out of the plugin assembly. -->
+    <Compile Remove="Stellar.MinimalNameplate.Tests/**/*.cs" />
   </ItemGroup>
 
   <!-- Deploy is a per-machine dev concern: the DeployPlugin target lives in Local.props (gitignored), imported at the
