@@ -106,7 +106,7 @@ state dump and sprite-scan logging. One-time load/resolve lines (`resolve ok=`, 
 
 ## Release notes
 
-### 2.1.1
+### 2.1.2
 
 **What changed for you:** the class badges no longer make the game stutter. While you were in the world the overlay
 was quietly triggering an error inside the game dozens of times a second — every one of those wrote a page to the
