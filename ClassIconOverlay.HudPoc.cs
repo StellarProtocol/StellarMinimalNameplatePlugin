@@ -26,12 +26,19 @@ internal sealed partial class ClassIconOverlay
     private bool          _hudPassOk;
 
     private CommandBuffer?         _hudCmd;
-    private Material?              _hudMat;   // Sprites/Default for badge + name quads (real-RGB textures) — occludes
+    private Material?              _hudMat;      // badge + name quads material — game HUD mat or fallback (BeginHudFrame)
+    private bool                   _hudMatOwned; // true ONLY when WE created the Sprites/Default fallback → we destroy it
     private MaterialPropertyBlock? _mpb;
     private Mesh?                  _bgQuad;
     private readonly Dictionary<int, Mesh> _iconQuads = new();
     private static readonly int MainTexId = Shader.PropertyToID("_MainTex");
     private static readonly int ColorId   = Shader.PropertyToID("_Color");
+
+    // Spike toggle: borrow the game's own HUD material (ui/material/hud_sprite) so our quads inherit the native plate's
+    // Post-Processing-INDEPENDENT occlusion — its shader samples a GLOBAL depth texture in-shader and discards, so it
+    // occludes at ALL PP settings; Sprites/Default relies on hardware ZTest against a depth attachment that only exists
+    // when PP's ZCopyDepthPass runs → see-through at Low/Off PP. false (or unresolved game mat) → Sprites/Default.
+    internal static bool UseGameHudMaterial = true;
 
     // Relation markers: real pre-colored PNG icons (loaded once) — a heart for Friend, a shield/crest for Guild(Union).
     // The PNGs already contain their own colors + transparency, so they draw UNTINTED (Color.white; _Color would
@@ -80,6 +87,24 @@ internal sealed partial class ClassIconOverlay
         }
         catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] HudFont resolve failed: {ex.Message}"); }
         return _hudFont;
+    }
+
+    // The game's own HUD sprite material — Panda.Hud.HudMgr.Mat (= ui/material/hud_sprite), same ZSingleton pattern
+    // HudFont() uses. Borrowed READ-ONLY and GAME-OWNED — never destroyed, never mutated (texture/color go through the
+    // MPB, not the material). Cached only when non-null, so a transient null (singleton not ready) or a destroyed
+    // HudMgr (scene reload → Unity null-overload) re-resolves next time instead of latching us to the fallback.
+    private Material? _gameHudMat;
+    private Material? GameHudMaterial()
+    {
+        if (_gameHudMat != null) return _gameHudMat;
+        try
+        {
+            var t = StellarInterop.FindType("Panda.Hud.HudMgr");
+            var inst = t?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)?.GetValue(null);
+            _gameHudMat = t?.GetProperty("Mat", BindingFlags.Public | BindingFlags.Instance)?.GetValue(inst) as Material;
+        }
+        catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] HUD material resolve failed: {ex.Message}"); }
+        return _gameHudMat;
     }
 
     // A baked name is a standalone RGBA Texture2D (SetPixels32'd from a coverage buffer), INDEPENDENT of the atlas
@@ -144,9 +169,22 @@ internal sealed partial class ClassIconOverlay
         _mpb ??= new MaterialPropertyBlock();
         if (_hudMat == null)
         {
-            var sh = Shader.Find("Sprites/Default");
-            if (sh == null) { _services.Log.Warning("[MinimalNameplate] Sprites/Default shader not found — rendering disabled"); return; }
-            _hudMat = new Material(sh) { hideFlags = HideFlags.HideAndDontSave };
+            // Prefer the game's own HUD material for PP-independent occlusion; fall back to Sprites/Default otherwise.
+            var game = UseGameHudMaterial ? GameHudMaterial() : null;
+            if (game != null)
+            {
+                _hudMat = game;
+                _hudMatOwned = false;   // GAME-OWNED — must NOT be destroyed
+                _services.Log.Info("[MinimalNameplate] hud material: game(ui/material/hud_sprite)");
+            }
+            else
+            {
+                var sh = Shader.Find("Sprites/Default");
+                if (sh == null) { _services.Log.Warning("[MinimalNameplate] Sprites/Default shader not found — rendering disabled"); return; }
+                _hudMat = new Material(sh) { hideFlags = HideFlags.HideAndDontSave };
+                _hudMatOwned = true;    // WE created it → DestroyHudPoc destroys it
+                _services.Log.Info("[MinimalNameplate] hud material: fallback Sprites/Default");
+            }
         }
     }
 
@@ -445,7 +483,9 @@ internal sealed partial class ClassIconOverlay
     {
         try { _hudCmd?.Dispose(); } catch { }
         _hudCmd = null;
-        if (_hudMat != null) { try { UnityEngine.Object.Destroy(_hudMat); } catch { } _hudMat = null; }
+        // Only destroy the material if WE own it (the Sprites/Default fallback); the borrowed game HUD material is
+        // game-owned — just drop our reference.
+        if (_hudMat != null) { if (_hudMatOwned) { try { UnityEngine.Object.Destroy(_hudMat); } catch { } } _hudMat = null; _hudMatOwned = false; }
         if (_bgQuad != null) { try { UnityEngine.Object.Destroy(_bgQuad); } catch { } _bgQuad = null; }
         foreach (var m in _iconQuads.Values) { try { UnityEngine.Object.Destroy(m); } catch { } }
         _iconQuads.Clear();
