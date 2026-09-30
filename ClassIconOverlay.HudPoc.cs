@@ -38,7 +38,7 @@ internal sealed partial class ClassIconOverlay
     // Post-Processing-INDEPENDENT occlusion — its shader samples a GLOBAL depth texture in-shader and discards, so it
     // occludes at ALL PP settings; Sprites/Default relies on hardware ZTest against a depth attachment that only exists
     // when PP's ZCopyDepthPass runs → see-through at Low/Off PP. false (or unresolved game mat) → Sprites/Default.
-    internal static bool UseGameHudMaterial = false;   // DEFAULTED OFF: hud_sprite drew blank in-game; under diagnosis (see LogGameMaterialOnce)
+    internal static bool UseGameHudMaterial = true;   // texture prop is _Tex0 (not _MainTex) — see ClassIconOverlay.Material.cs
 
     // Relation markers: real pre-colored PNG icons (loaded once) — a heart for Friend, a shield/crest for Guild(Union).
     // The PNGs already contain their own colors + transparency, so they draw UNTINTED (Color.white; _Color would
@@ -176,18 +176,19 @@ internal sealed partial class ClassIconOverlay
             if (game != null)
             {
                 _hudMat = game;
-                _hudMatOwned = false;   // GAME-OWNED — must NOT be destroyed
-                _services.Log.Info("[MinimalNameplate] hud material: game(ui/material/hud_sprite)");
+                _hudMatOwned = false; _borrowedMat = true; _texPropId = Tex0Id;   // game-owned; shader wants _Tex0 + depth params
+                _services.Log.Info("[MinimalNameplate] hud material: game(BlueProtocol/HUD/Sprite)");
             }
             else
             {
                 var sh = Shader.Find("Sprites/Default");
                 if (sh == null) { _services.Log.Warning("[MinimalNameplate] Sprites/Default shader not found — rendering disabled"); return; }
                 _hudMat = new Material(sh) { hideFlags = HideFlags.HideAndDontSave };
-                _hudMatOwned = true;    // WE created it → DestroyHudPoc destroys it
+                _hudMatOwned = true; _borrowedMat = false; _texPropId = MainTexId;   // WE own it; standard _MainTex, no depth params
                 _services.Log.Info("[MinimalNameplate] hud material: fallback Sprites/Default");
             }
         }
+        if (_borrowedMat) RefreshBorrowedMatParams();   // per-frame: cache the shader's live depth/exposure params (Material.cs)
     }
 
     // Append one player's badge (class icon) and/or name to this frame's command buffer, billboarded + pixel-scaled.
@@ -218,18 +219,14 @@ internal sealed partial class ClassIconOverlay
         if (showIcon)
         {
             // bg — rounded mask tinted by class color (grayed when dead; the white class logo on top stays visible)
-            _mpb!.Clear();
-            _mpb.SetTexture(MainTexId, RoundedTex());
-            _mpb.SetColor(ColorId, BadgeColor(uuid, professionId));
+            SetDrawMpb(RoundedTex(), BadgeColor(uuid, professionId));
             _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(worldH, worldH, worldH)), _hudMat, 0, 0, _mpb);
 
             // icon — atlas sub-rect (drawn after bg so it composites on top at equal depth)
             if (_iconCache.TryGetValue(professionId, out var ci) && ci.tex is Texture2D tex)
             {
                 float iconH = worldH * 0.72f;
-                _mpb.Clear();
-                _mpb.SetTexture(MainTexId, tex);
-                _mpb.SetColor(ColorId, Color.white);
+                SetDrawMpb(tex, Color.white);
                 _hudCmd.DrawMesh(IconQuad(professionId, ci.uv), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(iconH, iconH, iconH)), _hudMat, 0, 0, _mpb);
             }
         }
@@ -280,9 +277,7 @@ internal sealed partial class ClassIconOverlay
                 }
 
                 var nc = IsDead(uuid) ? DeadNameColor : (IsParty(uuid) ? PartyNameColor : OutsideNameColor);
-                _mpb!.Clear();
-                _mpb.SetTexture(MainTexId, nt.tex);
-                _mpb.SetColor(ColorId, nc);
+                SetDrawMpb(nt.tex, nc);
                 _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(namePos, camRot, new Vector3(nW, nH, 1f)), _hudMat, 0, 0, _mpb);
             }
         }

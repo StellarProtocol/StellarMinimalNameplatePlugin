@@ -18,9 +18,7 @@ internal sealed partial class ClassIconOverlay
     private void DrawMarker(Vector3 center, Quaternion rot, float width, float height, Texture2D? tex, Color tint)
     {
         if (_hudCmd == null || _hudMat == null || tex == null) return;
-        _mpb!.Clear();
-        _mpb.SetTexture(MainTexId, tex);
-        _mpb.SetColor(ColorId, tint);
+        SetDrawMpb(tex, tint);   // active texture prop (_Tex0/_MainTex) + color + (game material) depth params — Material.cs
         _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(center, rot, new Vector3(width, height, 1f)), _hudMat, 0, 0, _mpb);
     }
 
