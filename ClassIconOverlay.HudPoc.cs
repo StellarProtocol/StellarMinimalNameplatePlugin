@@ -38,7 +38,7 @@ internal sealed partial class ClassIconOverlay
     // Post-Processing-INDEPENDENT occlusion — its shader samples a GLOBAL depth texture in-shader and discards, so it
     // occludes at ALL PP settings; Sprites/Default relies on hardware ZTest against a depth attachment that only exists
     // when PP's ZCopyDepthPass runs → see-through at Low/Off PP. false (or unresolved game mat) → Sprites/Default.
-    internal static bool UseGameHudMaterial = true;
+    internal static bool UseGameHudMaterial = false;   // DEFAULTED OFF: hud_sprite drew blank in-game; under diagnosis (see LogGameMaterialOnce)
 
     // Relation markers: real pre-colored PNG icons (loaded once) — a heart for Friend, a shield/crest for Guild(Union).
     // The PNGs already contain their own colors + transparency, so they draw UNTINTED (Color.white; _Color would
@@ -102,6 +102,7 @@ internal sealed partial class ClassIconOverlay
             var t = StellarInterop.FindType("Panda.Hud.HudMgr");
             var inst = t?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)?.GetValue(null);
             _gameHudMat = t?.GetProperty("Mat", BindingFlags.Public | BindingFlags.Instance)?.GetValue(inst) as Material;
+            if (_gameHudMat != null) LogGameMaterialOnce(_gameHudMat);   // one-shot introspection — see ClassIconOverlay.MatDiag.cs
         }
         catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] HUD material resolve failed: {ex.Message}"); }
         return _gameHudMat;
@@ -164,6 +165,7 @@ internal sealed partial class ClassIconOverlay
     private void BeginHudFrame()
     {
         _nameBakesThisFrame = 0;   // FIX B — reset the per-frame name-bake budget (BeginHudFrame runs once per frame)
+        if (!_matDiagLogged) GameHudMaterial();   // one-shot: resolve + introspect the game HUD material even with the toggle off (MatDiag)
         if (_hudCmd == null) _hudCmd = new CommandBuffer { name = "StellarMinimalNameplateHud" };
         _hudCmd.Clear();
         _mpb ??= new MaterialPropertyBlock();
