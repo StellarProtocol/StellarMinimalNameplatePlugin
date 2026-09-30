@@ -275,6 +275,7 @@ internal sealed partial class ClassIconOverlay
     // (ZTest LEqual) draws crisp + occluded. _Color later tints white→name color; the black outline stays black.
     private (Texture2D? tex, int w, int h) BakeNameCpu(string text)
     {
+        long __t0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;   // #3 perf — see ClassIconOverlay.Perf.cs
         var font = HudFont() ?? NameFont();
         if (font == null || string.IsNullOrEmpty(text)) return (null, 0, 0);
         try { font.RequestCharactersInTexture(text, NameFontPx, FontStyle.Normal); } catch { }
@@ -361,6 +362,7 @@ internal sealed partial class ClassIconOverlay
         var tex = new Texture2D(W, H, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave, wrapMode = TextureWrapMode.Clamp };
         tex.SetPixels32(outp);
         tex.Apply();
+        if (PerfDiag) PerfLogNameBake(__t0, text.Length, aw, ah);
         return (tex, W, H);
     }
 

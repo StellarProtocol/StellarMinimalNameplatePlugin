@@ -52,19 +52,25 @@ internal sealed partial class ClassIconOverlay
 
     private void ScanSprites()
     {
+        // #1 perf: time the WHOLE scan body, plus the FindObjectsOfTypeAll call separately (via the out params below).
+        // Always logged — the scan is throttled/backed off, so it's low-volume. See ClassIconOverlay.Perf.cs.
+        long __t0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        double __findAllMs = 0; int __sprites = 0, __needed = 0, __matched = 0;
         try
         {
             var needed = CollectNeededSprites();
+            __needed = needed.Count;
             if (needed.Count == 0) { _consecutiveScanMisses++; return; }
 
-            int matched = MatchLoadedSprites(needed);
+            __matched = MatchLoadedSprites(needed, out __findAllMs, out __sprites);
             foreach (var prof in needed.Values) BumpMiss(prof);
-            _consecutiveScanMisses = matched > 0 ? 0 : _consecutiveScanMisses + 1;
+            _consecutiveScanMisses = __matched > 0 ? 0 : _consecutiveScanMisses + 1;
 
-            if (matched > 0 && Diag)
-                _services.Log.Info($"[MinimalNameplate] sprite scan: matched={matched} cached={_iconCache.Count} needed={needed.Count}");
+            if (__matched > 0 && Diag)
+                _services.Log.Info($"[MinimalNameplate] sprite scan: matched={__matched} cached={_iconCache.Count} needed={needed.Count}");
         }
         catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] ScanSprites error: {ex.Message}"); }
+        finally { if (PerfDiag) PerfLogSpriteScan(__t0, __findAllMs, __sprites, __needed, __matched); }
     }
 
     // Sprite name → profession id for every tracked profession we still want and have not given up on.
@@ -91,10 +97,14 @@ internal sealed partial class ClassIconOverlay
     // The expensive half: every all[i] materialises an Il2CppInterop wrapper. There is no cheaper name compare —
     // Sprite.name goes through the wrapper, and reading it off the raw il2cpp object would need unsafe pointer
     // walking plus a per-element string marshal anyway — so the memo and backoff above are what bound the cost.
-    private int MatchLoadedSprites(Dictionary<string, int> needed)
+    private int MatchLoadedSprites(Dictionary<string, int> needed, out double findAllMs, out int spriteCount)
     {
+        // #1 perf: isolate just the FindObjectsOfTypeAll cost (each element materialises an Il2CppInterop wrapper).
+        long __t = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var all = Resources.FindObjectsOfTypeAll<Sprite>();
+        findAllMs = PerfDiag ? PerfMsSince(__t) : 0;
         int scanned = all?.Length ?? 0, matched = 0;
+        spriteCount = scanned;
         for (int i = 0; i < scanned; i++)
         {
             var s = all![i];
