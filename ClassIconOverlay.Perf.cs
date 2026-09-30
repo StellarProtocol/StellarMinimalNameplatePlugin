@@ -11,9 +11,9 @@ namespace Stellar.MinimalNameplate;
 // allocates nothing extra except the spike-log string, which is built only on a >20 ms frame.
 internal sealed partial class ClassIconOverlay
 {
-    // Source flag: TRUE in this commit so the load-in perf lines log. Flip to false later to turn every
-    // [MinimalNameplate][perf] line off in one edit, without touching any call site.
-    internal static bool PerfDiag = true;
+    // Source flag: FALSE for release (quiet). Flip to true to re-enable every [MinimalNameplate][perf] load-in timing
+    // line in one edit, without touching any call site.
+    internal static bool PerfDiag = false;
 
     // Per-frame handoff from TickThrottles to the OnUpdate spike-timing block: did THIS frame's 2 Hz throttle tick run
     // a player rebuild / a sprite scan? Reset at the top of each OnUpdate frame, read once when a spike is logged — so
