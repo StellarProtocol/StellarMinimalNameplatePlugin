@@ -97,6 +97,7 @@ internal static partial class NameplateIconPatch
         _piEntryTitleType = null; _piEntryValidText = null; _piCompId = null; _fiCompId = null;
         _compIdResolved   = false; _slotPlayerName = null; _errCount = 0;
         _hideMask.Clear();
+        _lastClearFrame.Clear();
     }
 
     private static bool ResolveHudApi(Action<string> log)
@@ -137,6 +138,13 @@ internal static partial class NameplateIconPatch
         return ok;
     }
 
+    // Per-compId frame stamp: this postfix is attached to FIVE methods (incl. OnHpChanged, which spams during
+    // load-in), so the SAME plate can rebuild many times in one frame. We only need to capture+clear it once per
+    // frame — a genuine rebuild on a LATER frame has a different Time.frameCount and still runs, so dedupe never
+    // suppresses a needed clear across frames (any single-frame residual is caught next frame + by the 2 Hz
+    // ReapplyAll sweep). Main-thread only (these postfixes run on the game thread) → Time.frameCount is safe here.
+    private static readonly Dictionary<long, int> _lastClearFrame = new();
+
     // __instance = HudComp. Runs after the game (re)builds this plate — capture the name, then clear the plate.
     private static void PostfixSetHudTitle(object __instance)
     {
@@ -145,6 +153,9 @@ internal static partial class NameplateIconPatch
         {
             long compId = GetCompId(__instance);
             if (compId == 0) return;
+            int frame = UnityEngine.Time.frameCount;
+            if (_lastClearFrame.TryGetValue(compId, out var lf) && lf == frame) return;   // already handled this frame
+            _lastClearFrame[compId] = frame;
             var render = _piRenderInstance!.GetValue(null);
             if (render == null) return;
             var title = _miGetTitle!.Invoke(render, new object[] { compId });
@@ -190,15 +201,21 @@ internal static partial class NameplateIconPatch
         catch { }
     }
 
+    // Reused single-element arg buffer for the RemoveTitle Invoke — avoids a per-key allocation in the clear loop.
+    // Main-thread only, and RemoveTitle never re-enters our walk, so reuse across the loop is safe.
+    private static readonly object?[] _removeArgs = new object?[1];
+
     // Removes every entry currently on the plate (name, blood, tags, …) by RemoveTitle-ing each slot key.
     private static void ClearAll(object title)
     {
         var dic = _piEntryDic != null ? _piEntryDic.GetValue(title) : _fiEntryDic?.GetValue(title);
         var keys = dic?.GetType().GetProperty("Keys")?.GetValue(dic);
         if (keys == null) return;
-        foreach (var k in WalkIl2Cpp(keys)) // WalkIl2Cpp materializes a list, so removing during the loop is safe
+        // WalkIl2Cpp returns the shared _walkBuf; we consume it fully here (RemoveTitle doesn't re-walk), so removing
+        // during the loop is safe — the game dict isn't the thing being iterated.
+        foreach (var k in WalkIl2Cpp(keys))
         {
-            try { _miRemoveTitle?.Invoke(title, new object?[] { k }); }
+            try { _removeArgs[0] = k; _miRemoveTitle?.Invoke(title, _removeArgs); }
             catch { }
         }
     }
@@ -215,7 +232,9 @@ internal static partial class NameplateIconPatch
             var dict = _piHudTitleDict != null ? _piHudTitleDict.GetValue(render) : _fiHudTitleDict!.GetValue(render);
             var values = dict?.GetType().GetProperty("Values")?.GetValue(dict);
             if (values == null) return;
-            foreach (var title in WalkIl2Cpp(values))
+            // Fresh list (not the shared _walkBuf): each iteration calls ClearAll → WalkIl2Cpp(keys), a nested walk
+            // that reuses _walkBuf. Materializing the outer walk first keeps that nesting safe. See WalkIl2Cpp.
+            foreach (var title in WalkIl2CppFresh(values))
             {
                 try { if (IsPlayerPlate(title)) ClearAll(title); }
                 catch (Exception ex) { LogStep("reapply", ex); }
@@ -237,22 +256,65 @@ internal static partial class NameplateIconPatch
         return raw == null ? 0 : Convert.ToInt64(raw);
     }
 
+    // Reflection walk of an Il2CppSystem key/value collection. Same discipline as ClassIconOverlay.EntityRead.cs:
+    // the result buffer is REUSED (Clear, not new) and the enumerator members are resolved once per collection Type
+    // (re-resolved only when the Type changes) instead of once per call. Walked twice per PostfixSetHudTitle
+    // (CaptureName on values + ClearAll on keys) and once per title in ReapplyAll, so at load-in this ran hot.
+    //
+    // ⚠️ RE-ENTRANCY (this is a STATIC class → the buffer/cache below are shared): only ONE walk may be live at a
+    // time on _walkBuf. CaptureName (values) then ClearAll (keys) run SEQUENTIALLY in PostfixSetHudTitle — safe, each
+    // consumes _walkBuf fully before the next walk. But ReapplyAll walks the title VALUES and, for EACH title, calls
+    // ClearAll → which walks that title's KEYS: a NESTED walk. If ReapplyAll's outer loop iterated _walkBuf, the
+    // inner ClearAll's Clear() would clobber it mid-iteration. So ReapplyAll uses WalkIl2CppFresh (a one-off new list,
+    // 2 Hz → allocation negligible) for its OUTER walk and leaves _walkBuf to the inner leaf walk. The shared type
+    // cache is still safe because the outer list is fully materialized before any nested walk mutates the cache.
+    private static readonly List<object> _walkBuf = new();
+    private static Type?         _walkType;
+    private static MethodInfo?   _walkGetEnum;
+    private static MethodInfo?   _walkMoveNext;
+    private static PropertyInfo? _walkCurrent;
+
+    // Reused buffer walk — for the LEAF walks (CaptureName/ClearAll), which are never nested inside one another.
     private static List<object> WalkIl2Cpp(object collection)
     {
+        _walkBuf.Clear();
+        WalkInto(collection, _walkBuf);
+        return _walkBuf;
+    }
+
+    // Fresh-list walk — for the ONE nesting site (ReapplyAll's outer title loop), so the inner ClearAll's reuse of
+    // _walkBuf can't corrupt the outer enumeration. See the RE-ENTRANCY note above.
+    private static List<object> WalkIl2CppFresh(object collection)
+    {
         var res = new List<object>();
-        var getEnum = FindNoArg(collection.GetType(), "GetEnumerator", BindingFlags.Public | BindingFlags.Instance);
-        var en = getEnum?.Invoke(collection, null);
-        if (en == null) return res;
-        var enT  = en.GetType();
-        var move = FindNoArg(enT, "MoveNext", BindingFlags.Public | BindingFlags.Instance);
-        var cur  = enT.GetProperty("Current");
-        if (move == null || cur == null) return res;
-        while ((bool)move.Invoke(en, null)!)
-        {
-            var v = cur.GetValue(en);
-            if (v != null) res.Add(v);
-        }
+        WalkInto(collection, res);
         return res;
+    }
+
+    private static void WalkInto(object collection, List<object> into)
+    {
+        var t = collection.GetType();
+        if (!ReferenceEquals(t, _walkType))
+        {
+            _walkType = t;
+            _walkGetEnum = FindNoArg(t, "GetEnumerator", BindingFlags.Public | BindingFlags.Instance);
+            _walkMoveNext = null;
+            _walkCurrent = null;
+        }
+        var en = _walkGetEnum?.Invoke(collection, null);
+        if (en == null) return;
+        if (_walkMoveNext == null || _walkCurrent == null)
+        {
+            var enT = en.GetType();
+            _walkMoveNext = FindNoArg(enT, "MoveNext", BindingFlags.Public | BindingFlags.Instance);
+            _walkCurrent = enT.GetProperty("Current");
+            if (_walkMoveNext == null || _walkCurrent == null) return;
+        }
+        while ((bool)_walkMoveNext.Invoke(en, null)!)
+        {
+            var v = _walkCurrent.GetValue(en);
+            if (v != null) into.Add(v);
+        }
     }
 
     private static int _errCount;

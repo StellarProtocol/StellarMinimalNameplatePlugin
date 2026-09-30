@@ -51,40 +51,73 @@ internal sealed partial class ClassIconOverlay
         catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] relation resolve failed: {ex.Message}"); }
     }
 
-    // True if this player is on the local player's friend list. FAIL-OPEN: unresolved / self / null / exception → false.
-    private bool IsFriendPlayer(long uuid)
+    // Friend/guild are CACHED per uuid and resolved on the overlay's 0.5s rebuild cadence (RefreshRelation, called
+    // from RebuildPlayers), NOT per drawn badge per frame. The old per-frame path did up to 2 Invokes × 2 key forms
+    // × 2 relations for EVERY badge every frame (thousands of reflection calls/allocations per second in a crowd).
+    // The per-frame reads below are now pure Dictionary lookups — no reflection in the draw loop. Trade-off (same as
+    // dead/profession): a membership change shows on the marker within 0.5s. FAIL-OPEN: a missing entry → false → no
+    // marker (never a positive "not a friend" assertion).
+    private readonly Dictionary<long, bool> _friendCache = new();
+    private readonly Dictionary<long, bool> _guildCache  = new();
+    private readonly object[] _relationArgs = new object[1];   // reused Invoke buffer — main thread only
+
+    // Which key form the game's LuaDataMgr sets are keyed by. KB says roleId = uuid>>16, but we confirm at runtime:
+    // test BOTH forms until the FIRST positive latches the form, then only ever invoke that one. If neither ever
+    // hits (genuine non-member), we stay Unknown and keep testing both — that is just the fail-open "no marker" path.
+    private enum RelKey { Unknown, RoleId, FullUuid }
+    private RelKey _relKeyForm = RelKey.Unknown;
+
+    /// <summary>Drop the relation caches — called from RebuildPlayers so a membership change is picked up within 0.5s.</summary>
+    internal void ClearRelationCache() { _friendCache.Clear(); _guildCache.Clear(); }
+
+    // Resolve + cache both relations for one player. Called at the 2 Hz rebuild rate. FAIL-OPEN: unresolved / self /
+    // null / exception → false for both. Self is excluded (relationship-to-self is meaningless, and IsUnionMember(self)
+    // can wrongly return true).
+    internal void RefreshRelation(long uuid)
     {
+        bool friend = false, guild = false;
         try
         {
             EnsureRelation();
-            if (_miIsFriend == null || _piLuaDataMgrInstance == null) return false;
-            if (uuid == _services.CombatSnapshot.LocalEntityId.Value) return false;   // relationship-to-self is meaningless
-            var inst = _piLuaDataMgrInstance.GetValue(null);
-            if (inst == null) return false;
-            // Test BOTH key forms (roleId = uuid>>16 AND full uuid); a set keyed by one form can't contain the other,
-            // so returning true if EITHER hits is safe and resolves which key the game actually uses.
-            long roleId = uuid >> 16;
-            return (_miIsFriend.Invoke(inst, new object[] { roleId }) is bool a && a)
-                || (_miIsFriend.Invoke(inst, new object[] { uuid })   is bool b && b);
+            if (_piLuaDataMgrInstance != null && uuid != _services.CombatSnapshot.LocalEntityId.Value)
+            {
+                var inst = _piLuaDataMgrInstance.GetValue(null);
+                if (inst != null)
+                {
+                    friend = ResolveRelation(_miIsFriend, inst, uuid);
+                    guild  = ResolveRelation(_miIsUnionMember, inst, uuid);
+                }
+            }
         }
+        catch { friend = false; guild = false; }
+        _friendCache[uuid] = friend;
+        _guildCache[uuid]  = guild;
+    }
+
+    // Invoke one relation predicate, respecting the latched key form. A set keyed by one form can't contain the other,
+    // so while the form is Unknown, testing both and returning true on EITHER is safe (and latches the winning form).
+    private bool ResolveRelation(MethodInfo? mi, object inst, long uuid)
+    {
+        if (mi == null) return false;
+        long roleId = uuid >> 16;
+        switch (_relKeyForm)
+        {
+            case RelKey.RoleId:   return InvokeRel(mi, inst, roleId);
+            case RelKey.FullUuid: return InvokeRel(mi, inst, uuid);
+            default:
+                if (InvokeRel(mi, inst, roleId)) { _relKeyForm = RelKey.RoleId;   return true; }
+                if (InvokeRel(mi, inst, uuid))   { _relKeyForm = RelKey.FullUuid; return true; }
+                return false;
+        }
+    }
+
+    private bool InvokeRel(MethodInfo mi, object inst, long key)
+    {
+        try { _relationArgs[0] = key; return mi.Invoke(inst, _relationArgs) is bool b && b; }
         catch { return false; }
     }
 
-    // True if this player is in the local player's guild (Union). FAIL-OPEN: unresolved / self / null / exception → false.
-    private bool IsGuildPlayer(long uuid)
-    {
-        try
-        {
-            EnsureRelation();
-            if (_miIsUnionMember == null || _piLuaDataMgrInstance == null) return false;
-            if (uuid == _services.CombatSnapshot.LocalEntityId.Value) return false;   // IsUnionMember(self) can wrongly return true
-            var inst = _piLuaDataMgrInstance.GetValue(null);
-            if (inst == null) return false;
-            // Test BOTH key forms (roleId = uuid>>16 AND full uuid) — see IsFriendPlayer for why EITHER hitting is safe.
-            long roleId = uuid >> 16;
-            return (_miIsUnionMember.Invoke(inst, new object[] { roleId }) is bool a && a)
-                || (_miIsUnionMember.Invoke(inst, new object[] { uuid })   is bool b && b);
-        }
-        catch { return false; }
-    }
+    // Per-frame reads — pure cache lookups, no reflection. Missing entry → false (fail-open, no marker).
+    private bool IsFriendPlayer(long uuid) => _friendCache.TryGetValue(uuid, out var v) && v;
+    private bool IsGuildPlayer(long uuid)  => _guildCache.TryGetValue(uuid, out var v) && v;
 }

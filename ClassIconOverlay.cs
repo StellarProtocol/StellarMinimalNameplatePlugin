@@ -237,7 +237,8 @@ internal sealed partial class ClassIconOverlay
     private void RebuildPlayers(Vector3 camPos)
     {
         _players.Clear();
-        _deadCache.Clear();   // dead state is resolved at most once per uuid per rebuild — ClassIconOverlay.EntityRead.cs
+        _deadCache.Clear();       // dead state is resolved at most once per uuid per rebuild — ClassIconOverlay.EntityRead.cs
+        ClearRelationCache();     // friend/guild likewise resolved per rebuild here, read per-frame — ClassIconOverlay.Relation.cs
         if (!Resolve()) return;
 
         var scored = new List<(long uuid, int prof, float dist)>();
@@ -272,7 +273,8 @@ internal sealed partial class ClassIconOverlay
         // Nearest first so the per-frame MaxIcons draw budget goes to the closest (most relevant) players; ties broken
         // by uuid for a stable order (entityDict order can shuffle, briefly swapping which class a badge shows).
         scored.Sort((a, b) => a.dist != b.dist ? a.dist.CompareTo(b.dist) : a.uuid.CompareTo(b.uuid));
-        foreach (var s in scored) { _players.Add((s.uuid, s.prof)); NoteProfession(s.prof); }
+        // Resolve friend/guild here (2 Hz) so the per-frame draw loop only reads the cache — ClassIconOverlay.Relation.cs.
+        foreach (var s in scored) { _players.Add((s.uuid, s.prof)); NoteProfession(s.prof); RefreshRelation(s.uuid); }
     }
 
     // Camera distance to a player's head anchor; unresolvable (out of AOI / model unloaded) sorts last.

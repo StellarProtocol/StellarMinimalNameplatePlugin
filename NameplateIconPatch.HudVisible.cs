@@ -108,13 +108,25 @@ internal static partial class NameplateIconPatch
     }
 
     // Both ZEntity and ZModel expose a long Uuid (on the shared ZPureEntity base) — resolve per-arg via reflection.
+    // The Uuid PropertyInfo is cached PER runtime Type: these postfixes are NOT gated by HidePlate, so they fire for
+    // EVERY entity during streaming (the broadest storm), and BOTH ZEntity and ZModel arg types flow through here — a
+    // single cached field would thrash between the two, so key the cache by Type. Same BindingFlags as before; the
+    // cached value can be null (unresolved) and that's fine (fail-open → uuid 0). Main-thread only (HUD setters run on
+    // the game thread), so the plain Dictionary needs no locking.
+    private static readonly Dictionary<Type, PropertyInfo?> _uuidProps = new();
+
     private static long ResolveUuid(object? arg)
     {
         if (arg == null) return 0;
         try
         {
-            var pi = arg.GetType().GetProperty("Uuid",
-                BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+            var t = arg.GetType();
+            if (!_uuidProps.TryGetValue(t, out var pi))
+            {
+                pi = t.GetProperty("Uuid",
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+                _uuidProps[t] = pi;
+            }
             var v = pi?.GetValue(arg);
             return v == null ? 0 : Convert.ToInt64(v);
         }
