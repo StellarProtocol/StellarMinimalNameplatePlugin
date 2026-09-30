@@ -86,6 +86,18 @@ internal sealed partial class ClassIconOverlay
     // cache on that event so names rebuild against the new atlas layout.
     private const int NameFontPx = 48;   // font pixel size the name is baked at (higher = crisper CPU composite)
     private readonly Dictionary<long, (string text, Texture2D tex, int w, int h)> _nameTex = new();
+
+    // FIX A — CPU snapshot of the GPU font atlas, read back ONCE per atlas instead of once per name. The per-name
+    // full-atlas readback (Blit → ReadPixels → GetPixels32) was the load-in freeze: a crowd with names on did dozens
+    // of full-atlas GPU readbacks in one frame. Invalidated on font repack (ClearNameTex, via the textureRebuilt
+    // hook) or an atlas swap (ref + dims compared in EnsureAtlasCpu, so a repack a bake's own glyphs trigger is caught).
+    private Color32[]? _atlasCpu; private int _atlasW, _atlasH; private Texture? _atlasSrc;
+
+    // FIX B — per-frame budget on NEW name bakes so a crowd load-in spreads its rasterizations over several frames
+    // instead of stalling one. Reset in BeginHudFrame; only cache MISSES that actually bake consume it (hits are free).
+    public static int MaxNameBakesPerFrame = 2;
+    private int _nameBakesThisFrame;
+
     private Il2CppSystem.Action<Font>? _fontRebuiltCb;
     private bool _fontRebuiltHooked;
     private void HookFontRebuilt()
@@ -104,11 +116,13 @@ internal sealed partial class ClassIconOverlay
     {
         foreach (var e in _nameTex.Values) { try { if (e.tex != null) UnityEngine.Object.Destroy(e.tex); } catch { } }
         _nameTex.Clear();
+        _atlasCpu = null; _atlasSrc = null;   // FIX A — atlas repacked: drop the CPU snapshot so it re-reads once
     }
 
     // Start a fresh frame: (re)create + clear the command buffer and lazily build the shared material/MPB.
     private void BeginHudFrame()
     {
+        _nameBakesThisFrame = 0;   // FIX B — reset the per-frame name-bake budget (BeginHudFrame runs once per frame)
         if (_hudCmd == null) _hudCmd = new CommandBuffer { name = "StellarMinimalNameplateHud" };
         _hudCmd.Clear();
         _mpb ??= new MaterialPropertyBlock();
@@ -265,26 +279,28 @@ internal sealed partial class ClassIconOverlay
     private (Texture2D? tex, int w, int h) GetNameTex(long uuid, string text)
     {
         if (_nameTex.TryGetValue(uuid, out var e) && e.text == text && e.tex != null) return (e.tex, e.w, e.h);
+        // Cache MISS → a bake. FIX B: over the per-frame budget, skip baking this frame (return no texture → the name
+        // and its markers simply don't draw this frame and compose one/two frames later). Cache hits above never reach
+        // here, so a warm name always draws and never consumes budget.
+        if (_nameBakesThisFrame >= MaxNameBakesPerFrame) return (null, 0, 0);
+        _nameBakesThisFrame++;
         var baked = BakeNameCpu(text);
         if (baked.tex != null) _nameTex[uuid] = (text, baked.tex, baked.w, baked.h);
         return baked;
     }
 
-    // CPU-composite the name into an RGBA Texture2D: white glyph fill + black outline, straight alpha. Reads the
-    // (alpha-only, GPU-only) font atlas via a blit+ReadPixels so we can build a real-RGB texture that Sprites/Default
-    // (ZTest LEqual) draws crisp + occluded. _Color later tints white→name color; the black outline stays black.
-    private (Texture2D? tex, int w, int h) BakeNameCpu(string text)
+    // Read the (alpha-only, GPU-only) font atlas back to a CPU Color32[] ONCE and cache it. The blit → ReadPixels →
+    // GetPixels32 of the WHOLE atlas is expensive; doing it per name was the load-in freeze (dozens of full-atlas
+    // readbacks in a single crowded frame). The snapshot is reused for every subsequent name until the dynamic font
+    // repacks (Font.textureRebuilt → ClearNameTex nulls it) or the atlas Texture instance / its dimensions change
+    // (compared here, so a repack THIS bake's own glyphs triggered — which can fire mid-bake — is still detected).
+    // Returns false on readback failure; the caller then keeps its (null,0,0) path.
+    private bool EnsureAtlasCpu(Texture atlas)
     {
-        long __t0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;   // #3 perf — see ClassIconOverlay.Perf.cs
-        var font = HudFont() ?? NameFont();
-        if (font == null || string.IsNullOrEmpty(text)) return (null, 0, 0);
-        try { font.RequestCharactersInTexture(text, NameFontPx, FontStyle.Normal); } catch { }
-        var atlas = font.material?.mainTexture;
-        if (atlas == null) return (null, 0, 0);
-        int aw = atlas.width, ah = atlas.height;
+        if (_atlasCpu != null && ReferenceEquals(_atlasSrc, atlas) && _atlasW == atlas.width && _atlasH == atlas.height)
+            return true;
 
-        // GPU atlas → CPU pixels (works even though the atlas isn't CPU-readable).
-        Color32[] apx;
+        int aw = atlas.width, ah = atlas.height;
         var tmp = RenderTexture.GetTemporary(aw, ah, 0, RenderTextureFormat.ARGB32);
         var prevRT = RenderTexture.active;
         try
@@ -294,11 +310,36 @@ internal sealed partial class ClassIconOverlay
             var acpu = new Texture2D(aw, ah, TextureFormat.RGBA32, false);
             acpu.ReadPixels(new Rect(0, 0, aw, ah), 0, 0);
             acpu.Apply();
-            apx = acpu.GetPixels32();
+            _atlasCpu = acpu.GetPixels32();
+            _atlasW = aw; _atlasH = ah; _atlasSrc = atlas;
             UnityEngine.Object.Destroy(acpu);
+            return true;
         }
-        catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] atlas read failed: {ex.Message}"); return (null, 0, 0); }
+        catch (Exception ex)
+        {
+            _services.Log.Warning($"[MinimalNameplate] atlas read failed: {ex.Message}");
+            _atlasCpu = null; _atlasSrc = null;
+            return false;
+        }
         finally { RenderTexture.active = prevRT; RenderTexture.ReleaseTemporary(tmp); }
+    }
+
+    // CPU-composite the name into an RGBA Texture2D: white glyph fill + black outline, straight alpha. Reads the
+    // (alpha-only, GPU-only) font atlas via the cached CPU snapshot (EnsureAtlasCpu) so we can build a real-RGB texture
+    // that Sprites/Default (ZTest LEqual) draws crisp + occluded. _Color later tints white→name color; outline stays black.
+    private (Texture2D? tex, int w, int h) BakeNameCpu(string text)
+    {
+        long __t0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;   // #3 perf — see ClassIconOverlay.Perf.cs
+        var font = HudFont() ?? NameFont();
+        if (font == null || string.IsNullOrEmpty(text)) return (null, 0, 0);
+        try { font.RequestCharactersInTexture(text, NameFontPx, FontStyle.Normal); } catch { }
+        var atlas = font.material?.mainTexture;
+        if (atlas == null) return (null, 0, 0);
+        // FIX A — read the atlas back to CPU ONCE (cached across names). Called AFTER RequestCharactersInTexture so a
+        // repack this name's own glyphs triggered is captured; EnsureAtlasCpu's ref/dims compare catches a swapped
+        // atlas even if the textureRebuilt callback didn't fire. Failure keeps the existing (null,0,0) path.
+        if (!EnsureAtlasCpu(atlas)) return (null, 0, 0);
+        var apx = _atlasCpu!; int aw = _atlasW, ah = _atlasH;
 
         // measure
         int maxY = 1, minY = 0; float penW = 0;
