@@ -82,20 +82,31 @@ internal sealed partial class ClassIconOverlay
         return _hudFont;
     }
 
-    // The dynamic font atlas repacks when new glyphs are requested, invalidating every cached name texture. Clear the
-    // cache on that event so names rebuild against the new atlas layout.
+    // A baked name is a standalone RGBA Texture2D (SetPixels32'd from a coverage buffer), INDEPENDENT of the atlas
+    // layout once composited — it does not sample the atlas at draw time. So a font-atlas repack does NOT invalidate a
+    // cached name; only the CPU atlas snapshot below needs refreshing. (The old behavior wiped every cached name on
+    // each repack, which collided with the per-frame bake budget during a crowd load-in — see OnFontRepacked.)
     private const int NameFontPx = 48;   // font pixel size the name is baked at (higher = crisper CPU composite)
     private readonly Dictionary<long, (string text, Texture2D tex, int w, int h)> _nameTex = new();
 
-    // FIX A — CPU snapshot of the GPU font atlas, read back ONCE per atlas instead of once per name. The per-name
-    // full-atlas readback (Blit → ReadPixels → GetPixels32) was the load-in freeze: a crowd with names on did dozens
-    // of full-atlas GPU readbacks in one frame. Invalidated on font repack (ClearNameTex, via the textureRebuilt
-    // hook) or an atlas swap (ref + dims compared in EnsureAtlasCpu, so a repack a bake's own glyphs trigger is caught).
-    private Color32[]? _atlasCpu; private int _atlasW, _atlasH; private Texture? _atlasSrc;
+    // A name whose bake keeps returning null (glyphs won't fit / atlas unreadable) is given up on after a few tries so
+    // it can't consume the per-frame bake budget every frame and starve valid new names. Reset on a repack (a grown
+    // atlas may now fit) via OnFontRepacked, and on teardown via ClearNameTex.
+    private readonly Dictionary<long, int> _nullBakeMisses = new();
+    private const int MaxNullBakeMisses = 5;
+
+    // FIX A — CPU snapshot of the GPU font atlas, read back ONCE per atlas instead of once per name (the per-name
+    // full-atlas readback — Blit → ReadPixels → GetPixels32 — was the load-in freeze: dozens of full-atlas GPU
+    // readbacks in one crowded frame). A repack frequently REUSES the same Texture object + dimensions (it repacks
+    // contents in place), so the ref/dims early-return in EnsureAtlasCpu can't detect a stale snapshot; _atlasDirty
+    // (set by OnFontRepacked from the textureRebuilt hook) forces a re-read on the next bake.
+    private Color32[]? _atlasCpu; private int _atlasW, _atlasH; private Texture? _atlasSrc; private bool _atlasDirty;
 
     // FIX B — per-frame budget on NEW name bakes so a crowd load-in spreads its rasterizations over several frames
     // instead of stalling one. Reset in BeginHudFrame; only cache MISSES that actually bake consume it (hits are free).
-    public static int MaxNameBakesPerFrame = 2;
+    // With names now persisting across repacks (OnFontRepacked no longer wipes them), 4/frame fills in a burst quickly
+    // without a mass re-bake storm, so it can't reintroduce the freeze.
+    public static int MaxNameBakesPerFrame = 4;
     private int _nameBakesThisFrame;
 
     private Il2CppSystem.Action<Font>? _fontRebuiltCb;
@@ -106,17 +117,31 @@ internal sealed partial class ClassIconOverlay
         _fontRebuiltHooked = true;
         try
         {
-            _fontRebuiltCb = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<Font>>(new Action<Font>(_ => ClearNameTex()));
+            _fontRebuiltCb = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<Font>>(new Action<Font>(_ => OnFontRepacked()));
             Font.add_textureRebuilt(_fontRebuiltCb);
         }
         catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] font-rebuilt hook failed: {ex.Message}"); }
     }
 
+    // Font atlas repacked (textureRebuilt fires). A baked name texture is independent of the atlas once composited, so
+    // we do NOT wipe _nameTex here — that full wipe (the old behavior) collided with the per-frame bake budget: during
+    // a crowd load-in, new names add glyphs → the atlas repacks repeatedly → each repack wiped all names and only a
+    // few could re-bake per frame, so some never appeared and others flickered (wipe → re-bake → wipe). We invalidate
+    // ONLY the CPU snapshot — via _atlasDirty, because a repack reuses the same Texture (ref/dims won't detect it) —
+    // and clear the null-bake caps so a name that didn't fit the old atlas gets one more try against the grown one.
+    private void OnFontRepacked()
+    {
+        _atlasCpu = null; _atlasSrc = null; _atlasDirty = true;
+        _nullBakeMisses.Clear();
+    }
+
+    // Teardown only (DestroyHudPoc): destroy every cached name texture and drop the snapshot. NOT called on a repack.
     private void ClearNameTex()
     {
         foreach (var e in _nameTex.Values) { try { if (e.tex != null) UnityEngine.Object.Destroy(e.tex); } catch { } }
         _nameTex.Clear();
-        _atlasCpu = null; _atlasSrc = null;   // FIX A — atlas repacked: drop the CPU snapshot so it re-reads once
+        _atlasCpu = null; _atlasSrc = null;
+        _nullBakeMisses.Clear();
     }
 
     // Start a fresh frame: (re)create + clear the command buffer and lazily build the shared material/MPB.
@@ -279,25 +304,31 @@ internal sealed partial class ClassIconOverlay
     private (Texture2D? tex, int w, int h) GetNameTex(long uuid, string text)
     {
         if (_nameTex.TryGetValue(uuid, out var e) && e.text == text && e.tex != null) return (e.tex, e.w, e.h);
+        // Given up on this name (repeated null bakes) → don't retry, don't spend budget. Reset by OnFontRepacked.
+        _nullBakeMisses.TryGetValue(uuid, out var miss);
+        if (miss >= MaxNullBakeMisses) return (null, 0, 0);
         // Cache MISS → a bake. FIX B: over the per-frame budget, skip baking this frame (return no texture → the name
         // and its markers simply don't draw this frame and compose one/two frames later). Cache hits above never reach
         // here, so a warm name always draws and never consumes budget.
         if (_nameBakesThisFrame >= MaxNameBakesPerFrame) return (null, 0, 0);
         _nameBakesThisFrame++;
         var baked = BakeNameCpu(text);
-        if (baked.tex != null) _nameTex[uuid] = (text, baked.tex, baked.w, baked.h);
+        if (baked.tex != null) { _nameTex[uuid] = (text, baked.tex, baked.w, baked.h); _nullBakeMisses.Remove(uuid); }
+        else _nullBakeMisses[uuid] = miss + 1;
         return baked;
     }
 
     // Read the (alpha-only, GPU-only) font atlas back to a CPU Color32[] ONCE and cache it. The blit → ReadPixels →
     // GetPixels32 of the WHOLE atlas is expensive; doing it per name was the load-in freeze (dozens of full-atlas
     // readbacks in a single crowded frame). The snapshot is reused for every subsequent name until the dynamic font
-    // repacks (Font.textureRebuilt → ClearNameTex nulls it) or the atlas Texture instance / its dimensions change
-    // (compared here, so a repack THIS bake's own glyphs triggered — which can fire mid-bake — is still detected).
-    // Returns false on readback failure; the caller then keeps its (null,0,0) path.
+    // repacks (Font.textureRebuilt → OnFontRepacked sets _atlasDirty → force a re-read here) or the atlas Texture
+    // instance / its dimensions change (compared here, so a repack THIS bake's own glyphs triggered — which can fire
+    // mid-bake — is still detected). Returns false on readback failure; the caller then keeps its (null,0,0) path.
     private bool EnsureAtlasCpu(Texture atlas)
     {
-        if (_atlasCpu != null && ReferenceEquals(_atlasSrc, atlas) && _atlasW == atlas.width && _atlasH == atlas.height)
+        // A repack (OnFontRepacked → _atlasDirty) reuses the same Texture + dims, so the ref/dims compare alone would
+        // wrongly keep the stale snapshot; force a re-read when dirty.
+        if (!_atlasDirty && _atlasCpu != null && ReferenceEquals(_atlasSrc, atlas) && _atlasW == atlas.width && _atlasH == atlas.height)
             return true;
 
         int aw = atlas.width, ah = atlas.height;
@@ -311,7 +342,7 @@ internal sealed partial class ClassIconOverlay
             acpu.ReadPixels(new Rect(0, 0, aw, ah), 0, 0);
             acpu.Apply();
             _atlasCpu = acpu.GetPixels32();
-            _atlasW = aw; _atlasH = ah; _atlasSrc = atlas;
+            _atlasW = aw; _atlasH = ah; _atlasSrc = atlas; _atlasDirty = false;
             UnityEngine.Object.Destroy(acpu);
             return true;
         }
