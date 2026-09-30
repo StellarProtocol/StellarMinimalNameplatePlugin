@@ -163,6 +163,8 @@ internal sealed partial class ClassIconOverlay
             try { var ct = cam.transform; camPos = ct.position; camRot = ct.rotation; }
             catch { return; }
 
+            long __perfT0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            _perfRebuiltThisFrame = _perfScannedThisFrame = false;
             TickThrottles(dt, camPos);
 
             _resScale = Mathf.Max(Screen.height, 1) / RefScreenHeight;
@@ -189,6 +191,8 @@ internal sealed partial class ClassIconOverlay
                 }
             }
             SubmitHudFrame();
+
+            if (PerfDiag) PerfLogFrame(__perfT0, w);
 
             if (Diag)
             {
@@ -218,6 +222,7 @@ internal sealed partial class ClassIconOverlay
         if (_rebuildTimer >= RebuildIntervalS)
         {
             _rebuildTimer = 0;
+            _perfRebuiltThisFrame = true;
             RebuildPlayers(camPos);
             // Re-hide any game plates that came back via a rebuild path we don't patch (dungeons/combat).
             if (NameplateIconPatch.HidePlate) NameplateIconPatch.ReapplyAll();
@@ -227,7 +232,7 @@ internal sealed partial class ClassIconOverlay
         // off and each profession is memo'd after a few fruitless scans, so an icon that never loads can no longer pin
         // a full loaded-object scan at 1 Hz for the whole session — see ClassIconOverlay.Icons.cs.
         _scanTimer += dt;
-        if (_scanTimer >= ScanDelaySeconds && AnyUncached()) { _scanTimer = 0; ScanSprites(); }
+        if (_scanTimer >= ScanDelaySeconds && AnyUncached()) { _scanTimer = 0; _perfScannedThisFrame = true; ScanSprites(); }
     }
 
     // Every AOI player (uuid low-16 == 640) with a resolvable profession, scored by camera distance. Throttled — not
@@ -236,8 +241,11 @@ internal sealed partial class ClassIconOverlay
     // with the game plate hidden for them too, so those players showed nothing at all.)
     private void RebuildPlayers(Vector3 camPos)
     {
+        long __t0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        int __walked = 0;
         _players.Clear();
-        _deadCache.Clear();   // dead state is resolved at most once per uuid per rebuild — ClassIconOverlay.EntityRead.cs
+        _deadCache.Clear();       // dead state is resolved at most once per uuid per rebuild — ClassIconOverlay.EntityRead.cs
+        ClearRelationCache();     // friend/guild likewise resolved per rebuild here, read per-frame — ClassIconOverlay.Relation.cs
         if (!Resolve()) return;
 
         var scored = new List<(long uuid, int prof, float dist)>();
@@ -255,6 +263,7 @@ internal sealed partial class ClassIconOverlay
             {
                 foreach (var k in WalkIl2Cpp(keys))
                 {
+                    __walked++;
                     long uuid = Convert.ToInt64(k);
                     if ((uuid & 0xFFFF) != PlayerTypeMarker) continue; // players only
                     if (uuid == local.Value) continue;                 // self already scored
@@ -272,7 +281,10 @@ internal sealed partial class ClassIconOverlay
         // Nearest first so the per-frame MaxIcons draw budget goes to the closest (most relevant) players; ties broken
         // by uuid for a stable order (entityDict order can shuffle, briefly swapping which class a badge shows).
         scored.Sort((a, b) => a.dist != b.dist ? a.dist.CompareTo(b.dist) : a.uuid.CompareTo(b.uuid));
-        foreach (var s in scored) { _players.Add((s.uuid, s.prof)); NoteProfession(s.prof); }
+        // Resolve friend/guild here (2 Hz) so the per-frame draw loop only reads the cache — ClassIconOverlay.Relation.cs.
+        foreach (var s in scored) { _players.Add((s.uuid, s.prof)); NoteProfession(s.prof); RefreshRelation(s.uuid); }
+
+        if (PerfDiag) PerfLogRebuild(__t0, __walked);
     }
 
     // Camera distance to a player's head anchor; unresolvable (out of AOI / model unloaded) sorts last.

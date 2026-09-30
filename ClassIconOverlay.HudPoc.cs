@@ -33,6 +33,15 @@ internal sealed partial class ClassIconOverlay
     private static readonly int MainTexId = Shader.PropertyToID("_MainTex");
     private static readonly int ColorId   = Shader.PropertyToID("_Color");
 
+    // Configure the shared MPB for one draw: texture (_MainTex) + color (_Color). Used by every badge/icon/name/marker
+    // draw so all four share one code path.
+    private void SetDrawMpb(Texture tex, Color color)
+    {
+        _mpb!.Clear();
+        _mpb.SetTexture(MainTexId, tex);
+        _mpb.SetColor(ColorId, color);
+    }
+
     // Relation markers: real pre-colored PNG icons (loaded once) — a heart for Friend, a shield/crest for Guild(Union).
     // The PNGs already contain their own colors + transparency, so they draw UNTINTED (Color.white; _Color would
     // multiply and distort them).
@@ -82,10 +91,27 @@ internal sealed partial class ClassIconOverlay
         return _hudFont;
     }
 
-    // The dynamic font atlas repacks when new glyphs are requested, invalidating every cached name texture. Clear the
-    // cache on that event so names rebuild against the new atlas layout.
+    // A baked name is a standalone RGBA Texture2D (SetPixels32'd from a coverage buffer), INDEPENDENT of the atlas
+    // layout once composited — it does not sample the atlas at draw time. So a font-atlas repack does NOT invalidate a
+    // cached name; baked names survive a repack (see OnFontRepacked). Each BakeNameCpu reads the CURRENT atlas fresh —
+    // no snapshot cache (a cached snapshot dropped glyphs packed into free space without a textureRebuilt → missing
+    // characters); the per-frame bake budget below bounds the readback cost.
     private const int NameFontPx = 48;   // font pixel size the name is baked at (higher = crisper CPU composite)
     private readonly Dictionary<long, (string text, Texture2D tex, int w, int h)> _nameTex = new();
+
+    // A name whose bake keeps returning null (glyphs won't fit / atlas unreadable) is given up on after a few tries so
+    // it can't consume the per-frame bake budget every frame and starve valid new names. Reset on a repack (a grown
+    // atlas may now fit) via OnFontRepacked, and on teardown via ClearNameTex. Rarely trips now that bakes read fresh.
+    private readonly Dictionary<long, int> _nullBakeMisses = new();
+    private const int MaxNullBakeMisses = 5;
+
+    // FIX B — per-frame budget on NEW name bakes so a crowd load-in spreads its rasterizations over several frames
+    // instead of stalling one. Reset in BeginHudFrame; only cache MISSES that actually bake consume it (hits are free).
+    // Each bake does a fresh full-atlas ReadPixels + GetPixels32 (a GPU sync + managed alloc), so cap readbacks per
+    // frame; baked names persist across repacks, so steady state is 0 bakes/frame.
+    public static int MaxNameBakesPerFrame = 3;
+    private int _nameBakesThisFrame;
+
     private Il2CppSystem.Action<Font>? _fontRebuiltCb;
     private bool _fontRebuiltHooked;
     private void HookFontRebuilt()
@@ -94,21 +120,34 @@ internal sealed partial class ClassIconOverlay
         _fontRebuiltHooked = true;
         try
         {
-            _fontRebuiltCb = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<Font>>(new Action<Font>(_ => ClearNameTex()));
+            _fontRebuiltCb = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<Font>>(new Action<Font>(_ => OnFontRepacked()));
             Font.add_textureRebuilt(_fontRebuiltCb);
         }
         catch (Exception ex) { _services.Log.Warning($"[MinimalNameplate] font-rebuilt hook failed: {ex.Message}"); }
     }
 
+    // Font atlas repacked (textureRebuilt fires). A baked name texture is independent of the atlas once composited, so
+    // we do NOT wipe _nameTex here — that full wipe (the old behavior) collided with the per-frame bake budget: during
+    // a crowd load-in, new names add glyphs → the atlas repacks repeatedly → each repack wiped all names and only a
+    // few could re-bake per frame, so some never appeared and others flickered (wipe → re-bake → wipe). All we do is
+    // clear the null-bake caps so a name that didn't fit the old atlas gets one more try against the grown one.
+    private void OnFontRepacked()
+    {
+        _nullBakeMisses.Clear();
+    }
+
+    // Teardown only (DestroyHudPoc): destroy every cached name texture. NOT called on a repack.
     private void ClearNameTex()
     {
         foreach (var e in _nameTex.Values) { try { if (e.tex != null) UnityEngine.Object.Destroy(e.tex); } catch { } }
         _nameTex.Clear();
+        _nullBakeMisses.Clear();
     }
 
     // Start a fresh frame: (re)create + clear the command buffer and lazily build the shared material/MPB.
     private void BeginHudFrame()
     {
+        _nameBakesThisFrame = 0;   // FIX B — reset the per-frame name-bake budget (BeginHudFrame runs once per frame)
         if (_hudCmd == null) _hudCmd = new CommandBuffer { name = "StellarMinimalNameplateHud" };
         _hudCmd.Clear();
         _mpb ??= new MaterialPropertyBlock();
@@ -148,18 +187,14 @@ internal sealed partial class ClassIconOverlay
         if (showIcon)
         {
             // bg — rounded mask tinted by class color (grayed when dead; the white class logo on top stays visible)
-            _mpb!.Clear();
-            _mpb.SetTexture(MainTexId, RoundedTex());
-            _mpb.SetColor(ColorId, BadgeColor(uuid, professionId));
+            SetDrawMpb(RoundedTex(), BadgeColor(uuid, professionId));
             _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(worldH, worldH, worldH)), _hudMat, 0, 0, _mpb);
 
             // icon — atlas sub-rect (drawn after bg so it composites on top at equal depth)
             if (_iconCache.TryGetValue(professionId, out var ci) && ci.tex is Texture2D tex)
             {
                 float iconH = worldH * 0.72f;
-                _mpb.Clear();
-                _mpb.SetTexture(MainTexId, tex);
-                _mpb.SetColor(ColorId, Color.white);
+                SetDrawMpb(tex, Color.white);
                 _hudCmd.DrawMesh(IconQuad(professionId, ci.uv), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(iconH, iconH, iconH)), _hudMat, 0, 0, _mpb);
             }
         }
@@ -210,9 +245,7 @@ internal sealed partial class ClassIconOverlay
                 }
 
                 var nc = IsDead(uuid) ? DeadNameColor : (IsParty(uuid) ? PartyNameColor : OutsideNameColor);
-                _mpb!.Clear();
-                _mpb.SetTexture(MainTexId, nt.tex);
-                _mpb.SetColor(ColorId, nc);
+                SetDrawMpb(nt.tex, nc);
                 _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(namePos, camRot, new Vector3(nW, nH, 1f)), _hudMat, 0, 0, _mpb);
             }
         }
@@ -265,16 +298,30 @@ internal sealed partial class ClassIconOverlay
     private (Texture2D? tex, int w, int h) GetNameTex(long uuid, string text)
     {
         if (_nameTex.TryGetValue(uuid, out var e) && e.text == text && e.tex != null) return (e.tex, e.w, e.h);
+        // Given up on this name (repeated null bakes) → don't retry, don't spend budget. Reset by OnFontRepacked.
+        _nullBakeMisses.TryGetValue(uuid, out var miss);
+        if (miss >= MaxNullBakeMisses) return (null, 0, 0);
+        // Cache MISS → a bake. FIX B: over the per-frame budget, skip baking this frame (return no texture → the name
+        // and its markers simply don't draw this frame and compose one/two frames later). Cache hits above never reach
+        // here, so a warm name always draws and never consumes budget.
+        if (_nameBakesThisFrame >= MaxNameBakesPerFrame) return (null, 0, 0);
+        _nameBakesThisFrame++;
         var baked = BakeNameCpu(text);
-        if (baked.tex != null) _nameTex[uuid] = (text, baked.tex, baked.w, baked.h);
+        if (baked.tex != null) { _nameTex[uuid] = (text, baked.tex, baked.w, baked.h); _nullBakeMisses.Remove(uuid); }
+        else _nullBakeMisses[uuid] = miss + 1;
         return baked;
     }
 
     // CPU-composite the name into an RGBA Texture2D: white glyph fill + black outline, straight alpha. Reads the
-    // (alpha-only, GPU-only) font atlas via a blit+ReadPixels so we can build a real-RGB texture that Sprites/Default
+    // (alpha-only, GPU-only) font atlas via a blit + ReadPixels so we can build a real-RGB texture that Sprites/Default
     // (ZTest LEqual) draws crisp + occluded. _Color later tints white→name color; the black outline stays black.
+    //
+    // The atlas is read FRESH every bake (no snapshot cache): a new glyph is often packed into existing atlas free
+    // space WITHOUT firing textureRebuilt and without changing the Texture ref or dims, so any cached snapshot would
+    // be stale and drop that glyph (missing character). The per-frame bake budget (GetNameTex) bounds the cost.
     private (Texture2D? tex, int w, int h) BakeNameCpu(string text)
     {
+        long __t0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;   // #3 perf — see ClassIconOverlay.Perf.cs
         var font = HudFont() ?? NameFont();
         if (font == null || string.IsNullOrEmpty(text)) return (null, 0, 0);
         try { font.RequestCharactersInTexture(text, NameFontPx, FontStyle.Normal); } catch { }
@@ -282,7 +329,8 @@ internal sealed partial class ClassIconOverlay
         if (atlas == null) return (null, 0, 0);
         int aw = atlas.width, ah = atlas.height;
 
-        // GPU atlas → CPU pixels (works even though the atlas isn't CPU-readable).
+        // GPU atlas → CPU pixels (works even though the atlas isn't CPU-readable). Read AFTER RequestCharactersInTexture
+        // so this name's glyphs are present in the atlas we sample.
         Color32[] apx;
         var tmp = RenderTexture.GetTemporary(aw, ah, 0, RenderTextureFormat.ARGB32);
         var prevRT = RenderTexture.active;
@@ -361,6 +409,7 @@ internal sealed partial class ClassIconOverlay
         var tex = new Texture2D(W, H, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave, wrapMode = TextureWrapMode.Clamp };
         tex.SetPixels32(outp);
         tex.Apply();
+        if (PerfDiag) PerfLogNameBake(__t0, text.Length, aw, ah);
         return (tex, W, H);
     }
 
@@ -392,57 +441,8 @@ internal sealed partial class ClassIconOverlay
         return m;
     }
 
-    // Texture aspect (width/height) for sizing a marker quad; falls back to 1 (square) if the texture is missing.
-    private static float MarkerAspect(Texture2D? t) => (t != null && t.height > 0) ? (float)t.width / t.height : 1f;
-
-    // Draw one relation marker, billboarded with camRot, at an explicit width×height (width follows the texture aspect
-    // so the wide heart and tall shield read equal). The relation PNGs are pre-colored so callers pass Color.white
-    // (no tint); the tint param stays for generality.
-    private void DrawMarker(Vector3 center, Quaternion rot, float width, float height, Texture2D? tex, Color tint)
-    {
-        if (_hudCmd == null || _hudMat == null || tex == null) return;
-        _mpb!.Clear();
-        _mpb.SetTexture(MainTexId, tex);
-        _mpb.SetColor(ColorId, tint);
-        _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(center, rot, new Vector3(width, height, 1f)), _hudMat, 0, 0, _mpb);
-    }
-
-    private Texture2D? FriendTex() => _friendTex ??= LoadMarkerPng("friend-icon.png", "friend");
-    private Texture2D? UnionTex()  => _unionTex  ??= LoadMarkerPng("guild-icon.png", "guild");
-
-    // Load a pre-colored relation marker from an embedded PNG into a mip-mapped Texture2D (cached by the caller). The
-    // PNG carries its own colors + alpha, so it draws untinted. Fails safe: on a missing stream or decode failure, logs
-    // and returns null (DrawMarker no-ops on a null texture → simply no marker, never a crash).
-    private Texture2D? LoadMarkerPng(string fileName, string label)
-    {
-        try
-        {
-            byte[]? bytes;
-            using (var s = typeof(ClassIconOverlay).Assembly.GetManifestResourceStream("Stellar.MinimalNameplate." + fileName))
-            {
-                if (s == null) { _services.Log.Warning($"[MinimalNameplate] {label} icon load failed"); return null; }
-                using var ms = new System.IO.MemoryStream();
-                s.CopyTo(ms);
-                bytes = ms.ToArray();
-            }
-
-            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, mipChain: true)
-            { hideFlags = HideFlags.HideAndDontSave, wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
-            if (!ImageConversion.LoadImage(tex, bytes))
-            {
-                _services.Log.Warning($"[MinimalNameplate] {label} icon load failed");
-                UnityEngine.Object.Destroy(tex);
-                return null;
-            }
-            tex.filterMode = FilterMode.Bilinear;   // LoadImage can reset sampler state; mips come from mipChain:true
-            return tex;
-        }
-        catch (Exception ex)
-        {
-            _services.Log.Warning($"[MinimalNameplate] {label} icon load failed: {ex.Message}");
-            return null;
-        }
-    }
+    // Relation-marker rendering (MarkerAspect / DrawMarker / FriendTex / UnionTex / LoadMarkerPng) lives in the sibling
+    // partial ClassIconOverlay.Markers.cs (split out to keep this file under the 500-LoC cap).
 
     private void DestroyHudPoc()
     {
