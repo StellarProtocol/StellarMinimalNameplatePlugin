@@ -1,0 +1,12 @@
+{
+  "mn.badgeSize": "배지 크기",
+  "mn.enable": "미니멀 이름표 사용 (게임 이름표 사용 안 함)",
+  "mn.header": "미니멀 이름표",
+  "mn.maxShown": "최대 표시 수",
+  "mn.nameSize": "이름 크기",
+  "mn.showFriend": "친구 아이콘 표시",
+  "mn.showGuild": "길드 아이콘 표시",
+  "mn.showIcon": "클래스 아이콘 표시 (배지)",
+  "mn.showName": "플레이어 이름 표시 (배지 아래)",
+  "mn.title": "이름표"
+}
