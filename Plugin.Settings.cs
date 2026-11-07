@@ -61,7 +61,7 @@ public sealed partial class Plugin
             ChipRow("showrevivesealed", "mn.showReviveSealed", "mn.help.showReviveSealed", () => _showReviveSealed, v =>
             {
                 _showReviveSealed = v;
-                ClassIconOverlay.ShowReviveSealed = v;   // purple ring + "(42s)" on revive-sealed corpses
+                ClassIconOverlay.ShowReviveSealed = v;   // purple badge + name + "(42s)" on revive-sealed corpses
                 _cfg.Set<bool>("minimalnameplate_showrevivesealed", v);
                 _cfg.Save();
             })),

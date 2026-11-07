@@ -9,8 +9,8 @@ namespace Stellar.MinimalNameplate;
 
 // Revive-sealed marker: a dead player whose corpse carries BuffTable 2110057 "Weakened: Wish Sealed" (祈愿禁止) can't be
 // revived by the Renewal Prayer role skill / the "Arcane! Prayer of Life" Imagine until it runs out. The buff has
-// DeleteDead=false, so it stays on the corpse. We draw a purple ring around the (grey) dead badge and the name in purple
-// with a " (42s)" countdown. See Knowledge Base\Entity-Attributes-DeadState.md (last section).
+// DeleteDead=false, so it stays on the corpse. We fill the badge purple instead of the dead grey (white class logo on
+// top) and draw the name in purple with a " (42s)" countdown. See Knowledge Base\Entity-Attributes-DeadState.md (last section).
 //
 // PERF: the buff list is read ONLY for DEAD players and ONLY in the 2 Hz RebuildPlayers window (RefreshSeals); we cache
 // the seal END time (server ms) per uuid. Per frame the draw only subtracts the server clock. The countdown text never
@@ -24,7 +24,8 @@ internal sealed partial class ClassIconOverlay
     private const long NoCountdown     = long.MaxValue; // seal end sentinel: Duration == 0 → marker without a timer
     private const long MinSaneServerMs = 1_600_000_000_000L; // below this the framework clock isn't synced yet
 
-    private static readonly Color SealRingColor = new Color(0.702f, 0.522f, 1.00f, 1f);  // #B385FF
+    // Badge fill replaces DeadBadgeColor (same 0.95 alpha); a bit deeper than the name colour so the white logo reads.
+    private static readonly Color SealBadgeColor = new Color(0.55f, 0.27f, 0.86f, 0.95f); // rgb(140,70,220)
     private static readonly Color SealNameColor = new Color(0.780f, 0.608f, 1.00f, 1f);  // #C79BFF
 
     // uuid → seal end (server Unix ms, or NoCountdown). Rebuilt every RebuildPlayers (2 Hz), like _deadCache, so a
@@ -152,47 +153,6 @@ internal sealed partial class ClassIconOverlay
         _services.Log.Info($"[MinimalNameplate] [ReviveSeal] buff-list read unresolved ({what}) — revive-sealed marker inactive for this case");
     }
 
-    // ── Purple ring around the badge ──
-    // Rounded-rect OUTLINE matching the badge mask (RoundedTex: 256 px, corner radius 56), generated once. At the
-    // badge's reference size (SizePixels 50 px) ~3 px stroke with a ~2 px gap: stroke = 0.06 and gap = 0.04 of the
-    // badge, i.e. 15.4 / 10.2 px in the 256-px badge space. The texture is the badge space + a margin, centred.
-    private const int   RingTexSize = 312;               // 256 badge + 28 px margin each side (outer ring edge ≈ 25.6)
-    private const float RingGapPx = 10.24f, RingStrokePx = 15.36f;
-    private Texture2D? _sealRing;
-
-    private Texture2D SealRingTex()
-    {
-        if (_sealRing != null) return _sealRing;
-        const int s = RingTexSize;
-        const float half = 128f, r = 56f, c = s * 0.5f;
-        var t = new Texture2D(s, s, TextureFormat.RGBA32, false)
-        { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, hideFlags = HideFlags.HideAndDontSave };
-        var px = new Color[s * s];
-        for (int y = 0; y < s; y++)
-            for (int x = 0; x < s; x++)
-            {
-                // Signed distance to the badge's rounded rect (positive outside).
-                float qx = Mathf.Abs(x + 0.5f - c) - (half - r), qy = Mathf.Abs(y + 0.5f - c) - (half - r);
-                float ox = Mathf.Max(qx, 0f), oy = Mathf.Max(qy, 0f);
-                float d = Mathf.Sqrt(ox * ox + oy * oy) + Mathf.Min(Mathf.Max(qx, qy), 0f) - r;
-                float a = Mathf.Clamp01(d - RingGapPx + 0.5f) * Mathf.Clamp01(RingGapPx + RingStrokePx - d + 0.5f);
-                px[y * s + x] = new Color(1f, 1f, 1f, a);
-            }
-        t.SetPixels(px);
-        t.Apply();
-        _sealRing = t;
-        return t;
-    }
-
-    // Drawn BEFORE the badge bg (same billboard depth → draw order composites the badge on top).
-    private void DrawSealRing(Vector3 badgeCenter, Quaternion camRot, float worldH)
-    {
-        if (_hudCmd == null || _hudMat == null) return;
-        float sz = worldH * (RingTexSize / 256f);
-        SetDrawMpb(SealRingTex(), SealRingColor);
-        _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(sz, sz, sz)), _hudMat, 0, 0, _mpb);
-    }
-
     // ── Pre-baked countdown glyph pieces ──
     // Piece 0 = " (", 1..10 = '0'..'9', 11 = 's', 12 = ')'. Baked as ONE string with two spaces between pieces so a
     // piece's outline/pad never bleeds into its neighbour's cell; each piece is then a UV sub-rect quad.
@@ -315,7 +275,6 @@ internal sealed partial class ClassIconOverlay
 
     private void DestroyReviveSeal()
     {
-        if (_sealRing != null) { try { UnityEngine.Object.Destroy(_sealRing); } catch { } _sealRing = null; }
         if (_sealGlyphTex != null) { try { UnityEngine.Object.Destroy(_sealGlyphTex); } catch { } _sealGlyphTex = null; }
         for (int i = 0; i < _pieceMesh.Length; i++)
         { if (_pieceMesh[i] != null) { try { UnityEngine.Object.Destroy(_pieceMesh[i]); } catch { } _pieceMesh[i] = null; } }

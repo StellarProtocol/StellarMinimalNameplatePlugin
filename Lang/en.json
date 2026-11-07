@@ -8,7 +8,7 @@
   "mn.help.showGuild": "A small shield before the names of your guildmates.",
   "mn.help.showIcon": "A class-coloured icon above each player, so you can see their class at a glance. It turns grey when the player is dead.",
   "mn.help.showName": "The player's name under the badge. Party members are shown in cyan, and the name turns red when the player is dead.",
-  "mn.help.showReviveSealed": "After a revive skill or Imagine brings someone back, they can't be revived that way again for a while. If they die during that time, their badge gets a purple ring and their name turns purple with the seconds left, like \"Player (42s)\".",
+  "mn.help.showReviveSealed": "After a revive skill or Imagine brings someone back, they can't be revived that way again for a while. If they die during that time, their badge and name turn purple with the seconds left, like \"Player (42s)\".",
   "mn.maxPlayers": "Max players",
   "mn.nameSize": "Name size",
   "mn.off": "Off",

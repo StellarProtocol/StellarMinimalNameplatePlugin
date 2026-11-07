@@ -8,7 +8,7 @@
   "mn.help.showGuild": "Perisai kecil di depan nama sesama anggota guild-mu.",
   "mn.help.showIcon": "Ikon berwarna sesuai kelas di atas setiap pemain, jadi kelasnya langsung terlihat. Ikon menjadi abu-abu saat pemain mati.",
   "mn.help.showName": "Nama pemain di bawah lencana. Anggota party tampil berwarna sian, dan nama menjadi merah saat pemain mati.",
-  "mn.help.showReviveSealed": "Setelah skill kebangkitan atau Imagine menghidupkan seseorang, orang itu tidak bisa dibangkitkan dengan cara itu lagi untuk sementara. Jika ia mati selama waktu itu, lencananya mendapat cincin ungu dan namanya menjadi ungu dengan sisa detik, seperti \"Pemain (42s)\".",
+  "mn.help.showReviveSealed": "Setelah skill kebangkitan atau Imagine menghidupkan seseorang, orang itu tidak bisa dibangkitkan dengan cara itu lagi untuk sementara. Jika ia mati selama waktu itu, lencana dan namanya menjadi ungu dengan sisa detik, seperti \"Pemain (42s)\".",
   "mn.maxPlayers": "Maks. pemain",
   "mn.nameSize": "Ukuran nama",
   "mn.off": "Mati",

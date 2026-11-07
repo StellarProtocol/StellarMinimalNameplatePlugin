@@ -187,9 +187,9 @@ internal sealed partial class ClassIconOverlay
 
         if (showIcon)
         {
-            if (sealedP) DrawSealRing(badgeCenter, camRot, worldH);   // purple ring, drawn behind the badge
-            // bg — rounded mask tinted by class color (grayed when dead; the white class logo on top stays visible)
-            SetDrawMpb(RoundedTex(), BadgeColor(uuid, professionId));
+            // bg — rounded mask tinted by class color (grayed when dead, purple when dead + revive-sealed; the white class
+            // logo on top stays visible)
+            SetDrawMpb(RoundedTex(), sealedP ? SealBadgeColor : BadgeColor(uuid, professionId));
             _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(worldH, worldH, worldH)), _hudMat, 0, 0, _mpb);
 
             // icon — atlas sub-rect (drawn after bg so it composites on top at equal depth)
