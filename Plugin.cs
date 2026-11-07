@@ -5,7 +5,9 @@ using Stellar.Abstractions.Services;
 
 namespace Stellar.MinimalNameplate;
 
-public sealed class Plugin : IStellarPlugin
+// Core: config load, overlay + patch install, window/launcher registration. The settings window body is
+// Plugin.Settings.cs, the help popover Plugin.Help.cs, and the house-style kit Plugin.Style.cs.
+public sealed partial class Plugin : IStellarPlugin
 {
     public string Name => "MinimalNameplate";
 
@@ -50,6 +52,10 @@ public sealed class Plugin : IStellarPlugin
         _overlay = new ClassIconOverlay(_services);
         _overlay.SetEnabled(_enabled);
 
+        // The help popover first: the settings "?" fills read _tipWindow, and they may be polled during the main build.
+        _tipWindow = RegisterTipWindow();
+        _services.Framework.Update += TipRepositionTick;
+
         _window = _services.Windows.Register(new WindowRegistration(
             Spec: new WindowSpec(
                 Id:          "minimalnameplate.main",
@@ -62,7 +68,11 @@ public sealed class Plugin : IStellarPlugin
               ShouldRender = () => _services.ClientState.Phase == GamePhase.World
                                    && (_services.ClientState.UiState & GameUIState.Loading) == 0 },
             Root: BuildRoot(),
-            OnClose: () => _window!.SetVisible(false)));
+            OnClose: () => { CloseTip(); _window!.SetVisible(false); }));
+
+        // The phase stays World through the logout transition, so ShouldRender alone would leave the windows up on the
+        // loading screen; close them synchronously on Logout (house rule, Stellar-Design-Language.md §5).
+        _services.ClientState.Logout += OnLogoutHideWindows;
 
         // Title stays the fixed literal "Nameplates" — the stable pin-identity key (ILauncher.cs:49-50) —
         // so a pinned tile survives a language change; TitleProvider carries the live-localized display.
@@ -70,7 +80,10 @@ public sealed class Plugin : IStellarPlugin
             Title:   "Nameplates",
             IconPng: LoadIconPng(),
             IconKey: null,
-            OnOpen:  () => _window.SetVisible(true))
+            // BringToFront even from hidden: the help popover fronts itself (switching "?"s), and ZFront is STICKY — a
+            // fronted window outranks every never-fronted one forever — so once any of our windows fronts, every open
+            // must front (CLAUDE.md Rule 5 exception; WindowBuilder-Patterns.md §"ZFront is STICKY").
+            OnOpen:  () => { _window.SetVisible(true); _window.BringToFront(); })
         { Group = LauncherGroup.Plugin,
           // Re-localize the tile DISPLAY on a language change; Title above never changes (pin identity).
           TitleProvider = () => _loc.T("mn.title"),
@@ -79,133 +92,17 @@ public sealed class Plugin : IStellarPlugin
         _services.Log.Info("[MinimalNameplate] constructed");
     }
 
-    private HudElement BuildRoot() => new ColumnElement(new HudElement[]
+    private void OnLogoutHideWindows()
     {
-        new TextElement(() => _loc.T("mn.header"), Emphasis: true),
-        new RowElement(new HudElement[]
-        {
-            new ToggleElement(
-                Label: () => "",
-                Get:   () => _enabled,
-                Set:   v  =>
-                {
-                    _enabled = v;
-                    _overlay.SetEnabled(v);
-                    NameplateIconPatch.HidePlate = v;   // hide the game's plate while our overlay is on
-                    NameplateIconPatch.ReapplyAll();
-                    _cfg.Set<bool>("minimalnameplate_enabled", v);
-                    _cfg.Save();
-                }),
-            new TextElement(() => _loc.T("mn.enable")),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new ToggleElement(
-                Label: () => "",
-                Get:   () => _showIcon,
-                Set:   v  =>
-                {
-                    _showIcon = v;
-                    ClassIconOverlay.ShowClassIcon = v;
-                    _cfg.Set<bool>("minimalnameplate_showicon", v);
-                    _cfg.Save();
-                }),
-            new TextElement(() => _loc.T("mn.showIcon")),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new ToggleElement(
-                Label: () => "",
-                Get:   () => _showName,
-                Set:   v  =>
-                {
-                    _showName = v;
-                    ClassIconOverlay.ShowName = v;
-                    _cfg.Set<bool>("minimalnameplate_showname", v);
-                    _cfg.Save();
-                }),
-            new TextElement(() => _loc.T("mn.showName")),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new ToggleElement(
-                Label: () => "",
-                Get:   () => _showFriendIcon,
-                Set:   v  =>
-                {
-                    _showFriendIcon = v;
-                    ClassIconOverlay.ShowFriendIcon = v;
-                    _cfg.Set<bool>("minimalnameplate_showfriend", v);
-                    _cfg.Save();
-                }),
-            new TextElement(() => _loc.T("mn.showFriend")),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new ToggleElement(
-                Label: () => "",
-                Get:   () => _showGuildIcon,
-                Set:   v  =>
-                {
-                    _showGuildIcon = v;
-                    ClassIconOverlay.ShowGuildIcon = v;
-                    _cfg.Set<bool>("minimalnameplate_showguild", v);
-                    _cfg.Save();
-                }),
-            new TextElement(() => _loc.T("mn.showGuild")),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new ToggleElement(
-                Label: () => "",
-                Get:   () => _showReviveSealed,
-                Set:   v  =>
-                {
-                    _showReviveSealed = v;
-                    ClassIconOverlay.ShowReviveSealed = v;   // purple ring + "(42s)" on revive-sealed corpses
-                    _cfg.Set<bool>("minimalnameplate_showrevivesealed", v);
-                    _cfg.Save();
-                }),
-            new TextElement(() => _loc.T("mn.showReviveSealed")),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new CellElement(new TextElement(() => _loc.T("mn.badgeSize"), Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
-            new CellElement(new SliderElement(
-                Get: () => ClassIconOverlay.SizePixels,
-                Set: v  => { ClassIconOverlay.SizePixels = v; _cfg.Set<float>("minimalnameplate_sizepx", v); _cfg.Save(); },
-                Min: 16f, Max: 160f), Weight: 1f),
-            new CellElement(new TextElement(() => $"{ClassIconOverlay.SizePixels:F0}"), Width: 52f),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new CellElement(new TextElement(() => _loc.T("mn.nameSize"), Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
-            new CellElement(new SliderElement(
-                Get: () => ClassIconOverlay.NameSize,
-                Set: v  => { ClassIconOverlay.NameSize = v; _cfg.Set<float>("minimalnameplate_namepx", v); _cfg.Save(); },
-                Min: 16f, Max: 160f), Weight: 1f),
-            new CellElement(new TextElement(() => $"{ClassIconOverlay.NameSize:F0}"), Width: 52f),
-        }, Gap: 6f),
-        new RowElement(new HudElement[]
-        {
-            new CellElement(new TextElement(() => _loc.T("mn.maxShown"), Color: () => (ColorRgba?)_services.Theme.Colors.TextMuted), Width: 80f),
-            new CellElement(new SliderElement(
-                Get: () => ClassIconOverlay.MaxIcons,
-                Set: v  =>
-                {
-                    int n = (int)Math.Round(v);
-                    if (n < 5) n = 5; else if (n > 200) n = 200;   // 200 = the AOI-tracking safety bound
-                    ClassIconOverlay.MaxIcons = n;
-                    _cfg.Set<float>("minimalnameplate_maxicons", n);
-                    _cfg.Save();
-                },
-                Min: 5f, Max: 200f), Weight: 1f),
-            new CellElement(new TextElement(() => $"{ClassIconOverlay.MaxIcons}"), Width: 52f),
-        }, Gap: 6f),
-    }, Gap: 8f);
+        CloseTip();
+        _window.SetVisible(false);
+    }
 
     public void Dispose()
     {
+        try { _services.ClientState.Logout -= OnLogoutHideWindows; } catch { }
+        try { _services.Framework.Update -= TipRepositionTick; } catch { }
+        _tipWindow.Remove();
         NameplateIconPatch.HidePlate = false;
         NameplateIconPatch.ReapplyAll();
         NameplateIconPatch.Uninstall();
