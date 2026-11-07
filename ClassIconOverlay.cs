@@ -318,13 +318,14 @@ internal sealed partial class ClassIconOverlay
     private static readonly Color DeadBadgeColor = new Color(0.40f, 0.40f, 0.40f, 0.95f);
     private Color BadgeColor(long uuid, int prof) => IsDead(uuid) ? DeadBadgeColor : ClassColor(prof);
 
-    // Class color by profession id: 1/2/3/4/11 = red, 5/13 = green, 9/12 = blue, else gray.
+    // Class color by profession id: 1/2/3/4/11 = red, 5/13 = green, 9/12 = blue, else orange. Gray is reserved for the
+    // DEAD badge (DeadBadgeColor) so an unmapped/new class can never be mistaken for a corpse.
     private static Color ClassColor(int prof) => prof switch
     {
         1 or 2 or 3 or 4 or 11 => new Color(0.74f, 0.16f, 0.16f, 0.95f), // red
         5 or 13                => new Color(0.16f, 0.58f, 0.27f, 0.95f), // green
         9 or 12                => new Color(0.18f, 0.40f, 0.82f, 0.95f), // blue
-        _                      => new Color(0.44f, 0.44f, 0.44f, 0.95f), // gray (unknown)
+        _                      => new Color(0.902f, 0.502f, 0.122f, 0.95f), // orange #E6801F (unknown) — gray is DEAD only
     };
 
     // A high-res anti-aliased rounded-rect white mask (tinted per-use). Generated once.
