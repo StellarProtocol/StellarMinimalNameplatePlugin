@@ -8,5 +8,6 @@
   "mn.showGuild": "Show Guild Icon",
   "mn.showIcon": "Show Class Icon (badge)",
   "mn.showName": "Show Player Name (under badge)",
+  "mn.showReviveSealed": "Show Revive-Sealed Marker",
   "mn.title": "Nameplates"
 }

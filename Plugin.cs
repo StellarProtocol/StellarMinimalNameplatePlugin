@@ -21,6 +21,7 @@ public sealed class Plugin : IStellarPlugin
     private bool _showName;
     private bool _showFriendIcon;
     private bool _showGuildIcon;
+    private bool _showReviveSealed;
 
     public Plugin(IPluginServices services)
     {
@@ -33,6 +34,7 @@ public sealed class Plugin : IStellarPlugin
         _showName = _cfg.Get<bool> ("minimalnameplate_showname", true);
         _showFriendIcon = _cfg.Get<bool>("minimalnameplate_showfriend", _cfg.Get<bool>("minimalnameplate_showrelation", true));
         _showGuildIcon  = _cfg.Get<bool>("minimalnameplate_showguild",  _cfg.Get<bool>("minimalnameplate_showrelation", true));
+        _showReviveSealed = _cfg.Get<bool>("minimalnameplate_showrevivesealed", true);
         ClassIconOverlay.SizePixels    = _cfg.Get<float>("minimalnameplate_sizepx", 50f);
         ClassIconOverlay.NameSize      = _cfg.Get<float>("minimalnameplate_namepx", 64f);
         ClassIconOverlay.MaxIcons      = (int)_cfg.Get<float>("minimalnameplate_maxicons", 100f);
@@ -40,6 +42,7 @@ public sealed class Plugin : IStellarPlugin
         ClassIconOverlay.ShowName      = _showName;
         ClassIconOverlay.ShowFriendIcon = _showFriendIcon;
         ClassIconOverlay.ShowGuildIcon  = _showGuildIcon;
+        ClassIconOverlay.ShowReviveSealed = _showReviveSealed;
 
         NameplateIconPatch.Install(_services.Harmony.Create("nameplate"), _services.Log.Info);
         NameplateIconPatch.HidePlate = _enabled;   // hide the game's plate while our overlay is on
@@ -150,6 +153,20 @@ public sealed class Plugin : IStellarPlugin
                     _cfg.Save();
                 }),
             new TextElement(() => _loc.T("mn.showGuild")),
+        }, Gap: 6f),
+        new RowElement(new HudElement[]
+        {
+            new ToggleElement(
+                Label: () => "",
+                Get:   () => _showReviveSealed,
+                Set:   v  =>
+                {
+                    _showReviveSealed = v;
+                    ClassIconOverlay.ShowReviveSealed = v;   // purple ring + "(42s)" on revive-sealed corpses
+                    _cfg.Set<bool>("minimalnameplate_showrevivesealed", v);
+                    _cfg.Save();
+                }),
+            new TextElement(() => _loc.T("mn.showReviveSealed")),
         }, Gap: 6f),
         new RowElement(new HudElement[]
         {

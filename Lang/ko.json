@@ -8,5 +8,6 @@
   "mn.showGuild": "길드 아이콘 표시",
   "mn.showIcon": "클래스 아이콘 표시 (배지)",
   "mn.showName": "플레이어 이름 표시 (배지 아래)",
+  "mn.showReviveSealed": "부활 봉인 마커 표시",
   "mn.title": "이름표"
 }

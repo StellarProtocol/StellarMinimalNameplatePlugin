@@ -8,5 +8,6 @@
   "mn.showGuild": "ギルドアイコンを表示",
   "mn.showIcon": "クラスアイコン（バッジ）を表示",
   "mn.showName": "プレイヤー名（バッジ下）を表示",
+  "mn.showReviveSealed": "復活封印マーカーを表示",
   "mn.title": "ネームプレート"
 }
