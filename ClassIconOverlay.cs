@@ -283,6 +283,7 @@ internal sealed partial class ClassIconOverlay
         scored.Sort((a, b) => a.dist != b.dist ? a.dist.CompareTo(b.dist) : a.uuid.CompareTo(b.uuid));
         // Resolve friend/guild here (2 Hz) so the per-frame draw loop only reads the cache — ClassIconOverlay.Relation.cs.
         foreach (var s in scored) { _players.Add((s.uuid, s.prof)); NoteProfession(s.prof); RefreshRelation(s.uuid); }
+        RefreshSeals();   // revive-sealed corpses: buff read for DEAD players only, 2 Hz — ClassIconOverlay.ReviveSeal.cs
 
         if (PerfDiag) PerfLogRebuild(__t0, __walked);
     }
@@ -355,6 +356,7 @@ internal sealed partial class ClassIconOverlay
     private void DestroyPool()
     {
         DestroyHudPoc();
+        DestroyReviveSeal();
         _iconCache.Clear(); // game-owned textures; just drop our references
         if (_rounded != null) { try { UnityEngine.Object.Destroy(_rounded); } catch { } _rounded = null; }
     }

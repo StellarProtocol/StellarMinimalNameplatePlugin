@@ -183,9 +183,11 @@ internal sealed partial class ClassIconOverlay
         // Lift the badge only when BOTH are shown, so the name occupies the head spot below it.
         float lift = (showIcon && showN) ? SizePixels * _resScale * 0.9f : 0f;
         var badgeCenter = anchor + up * (lift / ppw);
+        bool sealedP = TrySealSecondsLeft(uuid, out int sealSecs);   // dead + revive-sealed — ClassIconOverlay.ReviveSeal.cs
 
         if (showIcon)
         {
+            if (sealedP) DrawSealRing(badgeCenter, camRot, worldH);   // purple ring, drawn behind the badge
             // bg — rounded mask tinted by class color (grayed when dead; the white class logo on top stays visible)
             SetDrawMpb(RoundedTex(), BadgeColor(uuid, professionId));
             _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(worldH, worldH, worldH)), _hudMat, 0, 0, _mpb);
@@ -211,6 +213,10 @@ internal sealed partial class ClassIconOverlay
                 float nW = nt.w * worldPerPx, nH = nt.h * worldPerPx;
                 // Under the badge (worldH*0.5 + gap + nH*0.5) when the icon is shown, else centered on the head anchor.
                 var namePos = showIcon ? badgeCenter - up * (worldH * 0.625f + nH * 0.5f) : anchor;
+                var right = camRot * Vector3.right;
+                // Revive-sealed " (42s)": name + timer are centred TOGETHER, so the name shifts left by half the timer.
+                float tAdvPx = sealedP ? SealTimerAdvancePx(sealSecs) : 0f;   // 0 = no countdown / glyphs not baked yet
+                if (tAdvPx > 0f) namePos -= right * (tAdvPx * worldPerPx * 0.5f);
 
                 // Relation markers IN FRONT OF the name: Friend heart and/or Guild(Union) shield. The name stays
                 // centered on the head anchor; markers hang off to the LEFT of the name's left edge (they do NOT shift
@@ -220,11 +226,10 @@ internal sealed partial class ClassIconOverlay
                 int count = (fr ? 1 : 0) + (gd ? 1 : 0);
                 if (count > 0)
                 {
-                    var right = camRot * Vector3.right;
                     float markerH = MarkerRefPx * worldPerPx;             // constant reference height → same size for every player
                                                                           // (worldPerPx already scales by distance + NameSize; independent of the per-name baked nt.h)
                     float gap = markerH * 0.18f;
-                    Vector3 nameLeft = namePos - right * (nW * 0.5f);      // name's left edge (name stays centered)
+                    Vector3 nameLeft = namePos - right * (nW * 0.5f);      // name's left edge = the name+timer line's left edge
                     // Order left→right: Friend, Guild, name (guild adjacent to the name). Walk right→left.
                     // Each marker uses the common height; WIDTH follows the texture aspect so the wide heart and tall shield read equal.
                     float cursor = -gap;
@@ -244,9 +249,10 @@ internal sealed partial class ClassIconOverlay
                     }
                 }
 
-                var nc = IsDead(uuid) ? DeadNameColor : (IsParty(uuid) ? PartyNameColor : OutsideNameColor);
+                var nc = sealedP ? SealNameColor : IsDead(uuid) ? DeadNameColor : (IsParty(uuid) ? PartyNameColor : OutsideNameColor);
                 SetDrawMpb(nt.tex, nc);
                 _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(namePos, camRot, new Vector3(nW, nH, 1f)), _hudMat, 0, 0, _mpb);
+                if (tAdvPx > 0f) DrawSealTimer(uuid, nm!, namePos, nt.w, nt.h, right, up, camRot, worldPerPx, sealSecs, nc);
             }
         }
     }
