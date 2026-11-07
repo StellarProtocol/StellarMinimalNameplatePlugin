@@ -51,8 +51,8 @@ Settings persist to `stellar.minimalnameplate.config.json` in the game directory
 
 ## Requirements
 
-- **Stellar ModSystem framework `>= 1.1.0`** (the only floor-setting API used is `IFramework.ScreenWidth`; everything
-  else is older/core).
+- **Stellar ModSystem framework `>= 2.29.0`** (the house-style settings window: round chips, help popovers,
+  round-knob sliders).
 - **Game build `release_3.7` (Season 3).** The overlay reflects into the game's IL2CPP types (`HudMgr`, `HudUtility`,
   `ZEntity`, `HudComp`, …), so it is tied to the game version, not the framework. Verified against `release_3.7`.
 - **.NET 6** (SDK to build).
