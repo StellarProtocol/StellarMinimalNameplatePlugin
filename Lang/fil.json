@@ -9,7 +9,7 @@
   "mn.help.showIcon": "Isang icon na may kulay ng class sa itaas ng bawat player, para makita agad ang class nila. Nagiging kulay abo ito kapag patay ang player.",
   "mn.help.showName": "Ang pangalan ng player sa ilalim ng badge. Cyan ang mga kasama sa party, at nagiging pula ang pangalan kapag patay ang player.",
   "mn.help.showReviveCountdown": "Ipinapakita ang natitirang segundo ng player na selyado ang pagbuhay, sa itaas ng pangalan niya. I-off ito para ang lilang badge at pangalan na lang ang matira.",
-  "mn.help.showReviveSealed": "Kapag may nabuhay muli dahil sa revive skill o Imagine, hindi na siya mabubuhay muli sa ganoong paraan nang ilang sandali. Kung mamatay siya sa panahong iyon, magiging lila ang badge at pangalan niya kasama ang natitirang segundo, gaya ng \"Player (42s)\".",
+  "mn.help.showReviveSealed": "Kapag may nabuhay muli dahil sa revive skill o Imagine, hindi na siya mabubuhay muli sa ganoong paraan nang ilang sandali. Kung mamatay siya sa panahong iyon, magiging lila ang badge at pangalan niya, at lalabas ang natitirang segundo sa sarili nitong linya sa itaas ng pangalan, gaya ng \"(42s)\". Puwede mong i-off ang segundo sa setting na Countdown.",
   "mn.maxPlayers": "Max na player",
   "mn.nameSize": "Laki ng pangalan",
   "mn.off": "Off",
