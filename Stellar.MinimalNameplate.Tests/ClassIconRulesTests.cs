@@ -43,45 +43,103 @@ public sealed class ClassIconRulesTests
     public void Unknown_attributes_default_to_Int64_the_pre_existing_behaviour()
         => Assert.Equal(typeof(long), ClassIconRules.AttrClrType(78));   // AttrDeadType
 
-    // ── Sprite-scan backoff ───────────────────────────────────────────────────────────────────────────────────────
+    // ── Icon source fallback + scan backoff ───────────────────────────────────────────────────────────────────────
 
-    // ORIGIN: same report. Resources.FindObjectsOfTypeAll<Sprite>() ran every second for the whole session whenever
-    // any tracked profession's icon was not loaded, materialising thousands of Il2CppInterop wrappers per second.
+    // ORIGIN: owner report 2026-11-09 — in a crowd many badges drew as a coloured square with NO class glyph for the
+    // rest of the session. The old rule gave up on a profession after 3 fruitless sprite scans and re-armed only when a
+    // never-seen profession entered the AOI, so once every class had been seen a missing icon was permanent. The
+    // fallback scan now backs off but NEVER stops: the delay caps at 30 s instead of turning into "never".
     [Theory]
-    [InlineData(0, 1.0)]
+    [InlineData(0, 2.0)]
     [InlineData(1, 2.0)]
     [InlineData(2, 5.0)]
     [InlineData(3, 10.0)]
-    [InlineData(4, 10.0)]
-    [InlineData(50, 10.0)]
-    public void Scan_delay_backs_off_1_2_5_10_and_caps(int consecutiveMisses, double expected)
+    [InlineData(4, 30.0)]
+    [InlineData(500, 30.0)]
+    public void Fallback_scan_backs_off_2_5_10_30_and_never_gives_up(int consecutiveMisses, double expected)
         => Assert.Equal(expected, ClassIconRules.NextScanDelaySeconds(consecutiveMisses));
 
+    // ORIGIN: same report's earlier half (2026-09-05) — a full FindObjectsOfTypeAll<Sprite>() at 1 Hz for a whole
+    // session caused stalls. The floor keeps the fallback from ever scanning faster than every 2 s.
     [Fact]
-    public void Scan_delay_never_drops_below_one_second()
-        => Assert.Equal(1.0, ClassIconRules.NextScanDelaySeconds(-1));
+    public void Fallback_scan_delay_never_drops_below_two_seconds()
+        => Assert.Equal(2.0, ClassIconRules.NextScanDelaySeconds(-1));
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    public void A_profession_is_still_sought_below_the_miss_cap(int misses)
-        => Assert.True(ClassIconRules.ShouldSeekSprite(professionId: 5, missCount: misses));
+    [InlineData(0.0)]
+    [InlineData(5.0)]
+    [InlineData(9.99)]
+    public void A_pending_framework_load_is_not_scanned_for_before_the_fallback_window(double pending)
+        => Assert.False(ClassIconRules.ShouldFallbackScan(5, frameworkReturnedDead: false, pendingSeconds: pending));
 
     [Theory]
-    [InlineData(3)]
-    [InlineData(4)]
-    [InlineData(99)]
-    public void A_profession_is_dropped_at_or_above_the_miss_cap(int misses)
-        => Assert.False(ClassIconRules.ShouldSeekSprite(professionId: 5, missCount: misses));
+    [InlineData(10.0)]
+    [InlineData(3600.0)]
+    public void A_long_pending_framework_load_falls_back_to_the_scan(double pending)
+        => Assert.True(ClassIconRules.ShouldFallbackScan(5, frameworkReturnedDead: false, pendingSeconds: pending));
+
+    // The framework never revalidates a Loaded slot, so a destroyed atlas texture would be handed back forever —
+    // the scan must take over at once, not after the pending window.
+    [Fact]
+    public void A_dead_framework_texture_falls_back_immediately()
+        => Assert.True(ClassIconRules.ShouldFallbackScan(5, frameworkReturnedDead: true, pendingSeconds: 0));
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void A_non_profession_is_never_sought(int professionId)
-        => Assert.False(ClassIconRules.ShouldSeekSprite(professionId, missCount: 0));
+    public void A_non_profession_is_never_scanned_for(int professionId)
+        => Assert.False(ClassIconRules.ShouldFallbackScan(professionId, frameworkReturnedDead: true, pendingSeconds: 999));
 
     [Fact]
-    public void Miss_cap_is_three()
-        => Assert.Equal(3, ClassIconRules.MaxSpriteMisses);
+    public void Fallback_window_is_ten_seconds()
+        => Assert.Equal(10.0, ClassIconRules.FallbackAfterSeconds);
+
+    // ── "?" glyph for an icon-less class ──────────────────────────────────────────────────────────────────────────
+
+    // ORIGIN: 2026-11-09 — profession 10 has an empty ProfessionIcon and the framework's guessed fallback path never
+    // resolves, so its badge was a bare coloured square. The "?" must still NEVER flash during a normal load: a
+    // profession with an IconPath gets the full window (framework pending → scan fallback at 10 s → "?" at 15 s).
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(10.0)]
+    [InlineData(14.99)]
+    public void A_normal_pending_load_never_shows_the_unknown_glyph(double pending)
+    {
+        Assert.False(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: true, pendingSeconds: pending));
+        Assert.False(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: null, pendingSeconds: pending));
+    }
+
+    [Theory]
+    [InlineData(15.0)]
+    [InlineData(3600.0)]
+    public void A_load_failing_past_the_window_shows_the_unknown_glyph(double pending)
+    {
+        Assert.True(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: true, pendingSeconds: pending));
+        Assert.True(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: null, pendingSeconds: pending));
+    }
+
+    [Fact]
+    public void A_class_with_no_icon_path_shows_the_glyph_after_a_short_grace()
+    {
+        Assert.False(ClassIconRules.ShowUnknownGlyph(10, hasIconPath: false, pendingSeconds: 0));
+        Assert.False(ClassIconRules.ShowUnknownGlyph(10, hasIconPath: false, pendingSeconds: 1.99));
+        Assert.True(ClassIconRules.ShowUnknownGlyph(10, hasIconPath: false, pendingSeconds: 2.0));
+    }
+
+    // pendingSeconds < 0 = an icon is loaded; a non-profession has no badge glyph at all.
+    [Theory]
+    [InlineData(10, -1.0)]
+    [InlineData(0, 999.0)]
+    [InlineData(-1, 999.0)]
+    public void Loaded_icons_and_non_professions_never_show_the_unknown_glyph(int prof, double pending)
+        => Assert.False(ClassIconRules.ShowUnknownGlyph(prof, hasIconPath: false, pendingSeconds: pending));
+
+    [Fact]
+    public void Unknown_glyph_windows_are_15_and_2_seconds_and_outlast_the_scan_fallback()
+    {
+        Assert.Equal(15.0, ClassIconRules.UnknownGlyphAfterSeconds);
+        Assert.Equal(2.0, ClassIconRules.UnknownGlyphNoPathGraceSeconds);
+        // The scan fallback must get its turn before a "?" replaces the empty square.
+        Assert.True(ClassIconRules.UnknownGlyphAfterSeconds > ClassIconRules.FallbackAfterSeconds);
+    }
 }

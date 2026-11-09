@@ -196,9 +196,16 @@ internal sealed partial class ClassIconOverlay
             if (_iconCache.TryGetValue(professionId, out var ci) && ci.tex is Texture2D tex)
             {
                 float iconH = worldH * 0.72f;
-                SetDrawMpb(tex, Color.white);
-                _hudCmd.DrawMesh(IconQuad(professionId, ci.uv), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(iconH, iconH, iconH)), _hudMat, 0, 0, _mpb);
+                // A texture destroyed since the last 2 Hz liveness check must cost only its glyph, never the whole
+                // frame (OnUpdate's catch would drop every badge) — ClassIconOverlay.Icons.cs DropIcon.
+                try
+                {
+                    SetDrawMpb(tex, Color.white);
+                    _hudCmd.DrawMesh(IconQuad(professionId, ci.uv), Matrix4x4.TRS(badgeCenter, camRot, new Vector3(iconH, iconH, iconH)), _hudMat, 0, 0, _mpb);
+                }
+                catch { DropIcon(professionId); }
             }
+            else if (_unknownProfs.Contains(professionId)) DrawUnknownGlyph(badgeCenter, camRot, worldH);   // icon-less class
         }
 
         // name — CPU-composited RGBA texture (white glyphs + black outline), drawn with Sprites/Default (ZTest LEqual)

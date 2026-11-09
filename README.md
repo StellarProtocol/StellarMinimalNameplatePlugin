@@ -101,8 +101,9 @@ state dump and sprite-scan logging. One-time load/resolve lines (`resolve ok=`, 
 
 - Characters are DOTS/ECS-rendered (no Unity `Transform` to parent to), so the badge position is polled each frame
   from the model anchor and billboarded toward the camera; size is dampened by distance to match the game's falloff.
-- Class/profession icons are found among already-loaded sprites (a piggyback scan) rather than the shared async loader,
-  so other plugins' icons are unaffected.
+- Class/profession icons come from the framework's shared icon loader (safe alongside other plugins: it loads each
+  icon once and shares it). A scan of already-loaded sprites is kept only as a backed-off fallback, and a cached icon
+  whose texture the game has released is detected and reloaded.
 
 ## Release notes
 
