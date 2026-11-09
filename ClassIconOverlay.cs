@@ -356,6 +356,7 @@ internal sealed partial class ClassIconOverlay
     {
         DestroyHudPoc();
         DestroyReviveSeal();
+        DestroyUnknownGlyph();
         _iconCache.Clear(); // game-owned textures; just drop our references
         if (_rounded != null) { try { UnityEngine.Object.Destroy(_rounded); } catch { } _rounded = null; }
     }

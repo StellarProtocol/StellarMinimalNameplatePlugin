@@ -65,4 +65,33 @@ internal static class ClassIconRules
         3 => 10.0,
         _ => 30.0,
     };
+
+    // ── "?" glyph for a class with NO icon ───────────────────────────────────────────────────────────────────────
+    //
+    // 2026-11-09: profession 10 has an EMPTY ProfessionTable.ProfessionIcon, and the framework's guessed fallback path
+    // points at the old atlas folder (and at Shield Knight's crest in the live one) — so it never resolves and the
+    // badge drew as a bare coloured square. A white "?" now marks "this class has no icon", but ONLY once that is
+    // definitive: a normal load (IconPath present, framework still pending) must never flash a "?".
+
+    /// <summary>Seconds a profession WITH an IconPath must stay unresolved (framework + fallback scan) before the "?".</summary>
+    public const double UnknownGlyphAfterSeconds = 15.0;
+
+    /// <summary>
+    /// Grace before the "?" for a profession whose table row has NO IconPath: the framework still tries a guessed path,
+    /// so give that one poll cycle or so to land before declaring the class icon-less.
+    /// </summary>
+    public const double UnknownGlyphNoPathGraceSeconds = 2.0;
+
+    /// <summary>
+    /// Whether to draw the white "?" for a profession that has no loaded icon. <paramref name="hasIconPath"/> is
+    /// <c>false</c> only when the profession's row exists with an empty IconPath; <c>null</c> = not known yet (row not
+    /// readable), which falls under the long window. <paramref name="pendingSeconds"/> &lt; 0 means not pending
+    /// (an icon is loaded) → never.
+    /// </summary>
+    public static bool ShowUnknownGlyph(int professionId, bool? hasIconPath, double pendingSeconds)
+    {
+        if (professionId <= 0 || pendingSeconds < 0) return false;
+        if (hasIconPath == false) return pendingSeconds >= UnknownGlyphNoPathGraceSeconds;
+        return pendingSeconds >= UnknownGlyphAfterSeconds;
+    }
 }

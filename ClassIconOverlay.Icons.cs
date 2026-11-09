@@ -76,6 +76,7 @@ internal sealed partial class ClassIconOverlay
                 if (!string.IsNullOrEmpty(nm)) _scanNeeded[nm!] = prof;
             }
             else LogIconState(prof, st, "fw", "pending");
+            UpdateUnknownGlyph(prof, st);   // white "?" once the icon is definitively unavailable — UnknownGlyph.cs
         }
 
         if (_scanNeeded.Count == 0) _consecutiveScanMisses = 0;   // nothing needs the fallback → next need starts fresh
@@ -113,6 +114,7 @@ internal sealed partial class ClassIconOverlay
         st.Source = source;
         st.PendingSince = -1;
         _iconCache[prof] = (tex, uv);
+        _unknownProfs.Remove(prof);   // a real icon replaces the "?"
         LogIconState(prof, st, source, "loaded");
     }
 

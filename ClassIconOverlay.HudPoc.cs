@@ -205,6 +205,7 @@ internal sealed partial class ClassIconOverlay
                 }
                 catch { DropIcon(professionId); }
             }
+            else if (_unknownProfs.Contains(professionId)) DrawUnknownGlyph(badgeCenter, camRot, worldH);   // icon-less class
         }
 
         // name — CPU-composited RGBA texture (white glyphs + black outline), drawn with Sprites/Default (ZTest LEqual)

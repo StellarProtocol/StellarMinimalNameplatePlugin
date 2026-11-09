@@ -93,4 +93,53 @@ public sealed class ClassIconRulesTests
     [Fact]
     public void Fallback_window_is_ten_seconds()
         => Assert.Equal(10.0, ClassIconRules.FallbackAfterSeconds);
+
+    // ── "?" glyph for an icon-less class ──────────────────────────────────────────────────────────────────────────
+
+    // ORIGIN: 2026-11-09 — profession 10 has an empty ProfessionIcon and the framework's guessed fallback path never
+    // resolves, so its badge was a bare coloured square. The "?" must still NEVER flash during a normal load: a
+    // profession with an IconPath gets the full window (framework pending → scan fallback at 10 s → "?" at 15 s).
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(10.0)]
+    [InlineData(14.99)]
+    public void A_normal_pending_load_never_shows_the_unknown_glyph(double pending)
+    {
+        Assert.False(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: true, pendingSeconds: pending));
+        Assert.False(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: null, pendingSeconds: pending));
+    }
+
+    [Theory]
+    [InlineData(15.0)]
+    [InlineData(3600.0)]
+    public void A_load_failing_past_the_window_shows_the_unknown_glyph(double pending)
+    {
+        Assert.True(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: true, pendingSeconds: pending));
+        Assert.True(ClassIconRules.ShowUnknownGlyph(5, hasIconPath: null, pendingSeconds: pending));
+    }
+
+    [Fact]
+    public void A_class_with_no_icon_path_shows_the_glyph_after_a_short_grace()
+    {
+        Assert.False(ClassIconRules.ShowUnknownGlyph(10, hasIconPath: false, pendingSeconds: 0));
+        Assert.False(ClassIconRules.ShowUnknownGlyph(10, hasIconPath: false, pendingSeconds: 1.99));
+        Assert.True(ClassIconRules.ShowUnknownGlyph(10, hasIconPath: false, pendingSeconds: 2.0));
+    }
+
+    // pendingSeconds < 0 = an icon is loaded; a non-profession has no badge glyph at all.
+    [Theory]
+    [InlineData(10, -1.0)]
+    [InlineData(0, 999.0)]
+    [InlineData(-1, 999.0)]
+    public void Loaded_icons_and_non_professions_never_show_the_unknown_glyph(int prof, double pending)
+        => Assert.False(ClassIconRules.ShowUnknownGlyph(prof, hasIconPath: false, pendingSeconds: pending));
+
+    [Fact]
+    public void Unknown_glyph_windows_are_15_and_2_seconds_and_outlast_the_scan_fallback()
+    {
+        Assert.Equal(15.0, ClassIconRules.UnknownGlyphAfterSeconds);
+        Assert.Equal(2.0, ClassIconRules.UnknownGlyphNoPathGraceSeconds);
+        // The scan fallback must get its turn before a "?" replaces the empty square.
+        Assert.True(ClassIconRules.UnknownGlyphAfterSeconds > ClassIconRules.FallbackAfterSeconds);
+    }
 }
