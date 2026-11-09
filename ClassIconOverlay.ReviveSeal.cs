@@ -10,11 +10,11 @@ namespace Stellar.MinimalNameplate;
 // Revive-sealed marker: a dead player whose corpse carries BuffTable 2110057 "Weakened: Wish Sealed" (祈愿禁止) can't be
 // revived by the Renewal Prayer role skill / the "Arcane! Prayer of Life" Imagine until it runs out. The buff has
 // DeleteDead=false, so it stays on the corpse. We fill the badge purple instead of the dead grey (white class logo on
-// top) and draw the name in purple with a " (42s)" countdown. See Knowledge Base\Entity-Attributes-DeadState.md (last section).
+// top) and draw the name in purple with a "(42s)" countdown on its own line above it. See Knowledge Base\Entity-Attributes-DeadState.md (last section).
 //
 // PERF: the buff list is read ONLY for DEAD players and ONLY in the 2 Hz RebuildPlayers window (RefreshSeals); we cache
 // the seal END time (server ms) per uuid. Per frame the draw only subtracts the server clock. The countdown text never
-// re-bakes: the glyph pieces " (", "0"-"9", "s", ")" are baked ONCE into one texture (same BakeNameCpu path/font as
+// re-bakes: the glyph pieces "(", "0"-"9", "s", ")" are baked ONCE into one texture (same BakeNameCpu path/font as
 // names, white → tinted by _Color) and the timer is composed from per-piece UV quads.
 internal sealed partial class ClassIconOverlay
 {
@@ -154,10 +154,10 @@ internal sealed partial class ClassIconOverlay
     }
 
     // ── Pre-baked countdown glyph pieces ──
-    // Piece 0 = " (", 1..10 = '0'..'9', 11 = 's', 12 = ')'. Baked as ONE string with two spaces between pieces so a
+    // Piece 0 = "(", 1..10 = '0'..'9', 11 = 's', 12 = ')'. Baked as ONE string with two spaces between pieces so a
     // piece's outline/pad never bleeds into its neighbour's cell; each piece is then a UV sub-rect quad.
-    private static readonly string[] SealPieceText = { " (", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "s", ")" };
-    private const int SealPieceS = 11, SealPieceClose = 12;
+    private static readonly string[] SealPieceText = { "(", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "s", ")" };
+    private const int SealPieceOpen = 0, SealPieceS = 11, SealPieceClose = 12;
     private Texture2D? _sealGlyphTex;
     private int        _sealGlyphH, _sealGlyphBaseline;   // texture height + baseline row (px from bottom)
     private readonly float[] _pieceAdv = new float[13], _pieceCellOff = new float[13], _pieceCellW = new float[13];
@@ -212,7 +212,7 @@ internal sealed partial class ClassIconOverlay
         return true;
     }
 
-    // Pen advance (baked px) of the " (Ns)" timer; 0 = nothing to draw (no countdown or glyphs not ready yet).
+    // Pen advance (baked px) of the "(Ns)" timer; 0 = nothing to draw (no countdown or glyphs not ready yet).
     private float SealTimerAdvancePx(int secs)
     {
         if (secs < 0 || !EnsureSealGlyphs()) return 0f;
@@ -230,44 +230,25 @@ internal sealed partial class ClassIconOverlay
         return n;
     }
 
-    // Name pen width + lowest glyph row (minY) — the same measure BakeNameCpu ran for this name — cached per uuid so the
-    // timer's baseline matches the name texture's. Only sealed names get here.
-    private readonly Dictionary<long, (string text, float penW, int minY)> _nameMetrics = new();
-
-    private (float penW, int minY) NameMetrics(long uuid, string text)
-    {
-        if (_nameMetrics.TryGetValue(uuid, out var m) && m.text == text) return (m.penW, m.minY);
-        var font = HudFont() ?? NameFont();
-        float penW = 0f; int minY = 0;
-        if (font != null)
-            foreach (char ch in text)
-                if (font.GetCharacterInfo(ch, out var ci, NameFontPx, FontStyle.Normal)) { minY = Mathf.Min(minY, ci.minY); penW += ci.advance; }
-        _nameMetrics[uuid] = (text, penW, minY);
-        return (penW, minY);
-    }
-
-    // Compose " (Ns)" right after the name's pen end, on the name's baseline, same scale (worldPerPx) and colour.
-    private void DrawSealTimer(long uuid, string name, Vector3 namePos, int nameTexW, int nameTexH, Vector3 right, Vector3 up,
-                               Quaternion camRot, float worldPerPx, int secs, Color color)
+    // Compose "(Ns)" on its own line, centred on lineCentre (the name's usual spot under the badge), same scale
+    // (worldPerPx) and colour as the name. Every piece is a full-height cell of ONE baked string, so all pieces share
+    // the baked baseline when drawn at the same vertical centre. Uses no name metrics at all (see SealTimerLayout).
+    private void DrawSealTimer(Vector3 lineCentre, Quaternion camRot, float worldPerPx, int secs, Color color)
     {
         if (_hudCmd == null || _hudMat == null || _sealGlyphTex == null) return;
-        int pad = NameOutlinePx + 1;
-        var (penW, nameMinY) = NameMetrics(uuid, name);
-        Vector3 nameLeft = namePos - right * (nameTexW * 0.5f * worldPerPx);
-        Vector3 baseline = namePos + up * ((pad - nameMinY - nameTexH * 0.5f) * worldPerPx);
-        float pen = pad + penW;                                    // baked px from the name's left edge
-        float cy = (_sealGlyphH * 0.5f - _sealGlyphBaseline) * worldPerPx;
+        var right = camRot * Vector3.right;
+        float pen = SealTimerLayout.PenStartPx(SealTimerAdvancePx(secs));   // baked px from the line centre
         var scaleY = _sealGlyphH * worldPerPx;
         SetDrawMpb(_sealGlyphTex, color);
 
         int nd = SplitDigits(secs);
         for (int i = -1; i <= nd + 1; i++)
         {
-            int p = i < 0 ? 0 : (i < nd ? 1 + _digitBuf[i] : (i == nd ? SealPieceS : SealPieceClose));
+            int p = i < 0 ? SealPieceOpen : (i < nd ? 1 + _digitBuf[i] : (i == nd ? SealPieceS : SealPieceClose));
             var mesh = _pieceMesh[p];
             if (mesh == null) continue;
             float cx = pen + _pieceCellOff[p] + _pieceCellW[p] * 0.5f;
-            var center = nameLeft + right * (cx * worldPerPx) + (baseline - namePos) + up * cy;
+            var center = lineCentre + right * (cx * worldPerPx);
             _hudCmd.DrawMesh(mesh, Matrix4x4.TRS(center, camRot, new Vector3(_pieceCellW[p] * worldPerPx, scaleY, 1f)), _hudMat, 0, 0, _mpb);
             pen += _pieceAdv[p];
         }
@@ -279,7 +260,6 @@ internal sealed partial class ClassIconOverlay
         for (int i = 0; i < _pieceMesh.Length; i++)
         { if (_pieceMesh[i] != null) { try { UnityEngine.Object.Destroy(_pieceMesh[i]); } catch { } _pieceMesh[i] = null; } }
         _sealGlyphMisses = 0;
-        _nameMetrics.Clear();
         _sealEnd.Clear();
     }
 }

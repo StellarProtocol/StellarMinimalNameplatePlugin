@@ -211,12 +211,15 @@ internal sealed partial class ClassIconOverlay
             {
                 float worldPerPx = (NameSize * _resScale / ppw * persp) / IconPixels * (32f / NameFontPx);
                 float nW = nt.w * worldPerPx, nH = nt.h * worldPerPx;
-                // Under the badge (worldH*0.5 + gap + nH*0.5) when the icon is shown, else centered on the head anchor.
-                var namePos = showIcon ? badgeCenter - up * (worldH * 0.625f + nH * 0.5f) : anchor;
                 var right = camRot * Vector3.right;
-                // Revive-sealed " (42s)": name + timer are centred TOGETHER, so the name shifts left by half the timer.
+                // Revive-sealed "(42s)" gets its OWN line in the name's usual spot under the badge, and the name is pushed
+                // down one line (owner 2026-11-09: the inline timer overlapped the name). The badge never moves.
                 float tAdvPx = sealedP ? SealTimerAdvancePx(sealSecs) : 0f;   // 0 = no countdown / glyphs not baked yet
-                if (tAdvPx > 0f) namePos -= right * (tAdvPx * worldPerPx * 0.5f);
+                float tH = tAdvPx > 0f ? _sealGlyphH * worldPerPx : 0f;       // timer line height (0 = no timer line)
+                float topH = tAdvPx > 0f ? tH : nH;                            // whatever sits directly under the badge
+                // Under the badge (worldH*0.5 + gap + topH*0.5) when the icon is shown, else centered on the head anchor.
+                var topPos = showIcon ? badgeCenter - up * (worldH * 0.625f + topH * 0.5f) : anchor;
+                var namePos = tAdvPx > 0f ? topPos - up * SealTimerLayout.NameCentreDrop(tH, nH) : topPos;
 
                 // Relation markers IN FRONT OF the name: Friend heart and/or Guild(Union) shield. The name stays
                 // centered on the head anchor; markers hang off to the LEFT of the name's left edge (they do NOT shift
@@ -252,7 +255,7 @@ internal sealed partial class ClassIconOverlay
                 var nc = sealedP ? SealNameColor : IsDead(uuid) ? DeadNameColor : (IsParty(uuid) ? PartyNameColor : OutsideNameColor);
                 SetDrawMpb(nt.tex, nc);
                 _hudCmd.DrawMesh(BgQuad(), Matrix4x4.TRS(namePos, camRot, new Vector3(nW, nH, 1f)), _hudMat, 0, 0, _mpb);
-                if (tAdvPx > 0f) DrawSealTimer(uuid, nm!, namePos, nt.w, nt.h, right, up, camRot, worldPerPx, sealSecs, nc);
+                if (tAdvPx > 0f) DrawSealTimer(topPos, camRot, worldPerPx, sealSecs, nc);
             }
         }
     }
