@@ -6,7 +6,8 @@ namespace Stellar.MinimalNameplate;
 
 // The settings window body (minimalnameplate.main), house style — user-approved design 2026-11-07:
 //   ToolHeader: [accent icon tile] [bold "Minimal Nameplate" / ● live status] … [master On/Off chip]
-//   SHOW ABOVE PLAYERS (click a chip to switch): label … [chip] [?] × 5
+//   SHOW ABOVE PLAYERS (click a chip to switch): label … [chip] [?] × 5, + the indented "Countdown" child row under
+//   "Revive-sealed marker" (approved 2026-11-09; greyed but clickable while the marker is off)
 //   SIZE (drag to adjust): muted label · round-knob slider · bold value · [?] × 3
 // Every chip / value has a fixed width, so toggling or dragging never resizes the window.
 public sealed partial class Plugin
@@ -64,7 +65,17 @@ public sealed partial class Plugin
                 ClassIconOverlay.ShowReviveSealed = v;   // purple badge + name + "(42s)" on revive-sealed corpses
                 _cfg.Set<bool>("minimalnameplate_showrevivesealed", v);
                 _cfg.Save();
-            })),
+            }),
+            // Child of the marker: greyed while the marker is off, but keeps (and lets you change) its own value.
+            SubChipRow("showrevivecountdown", "mn.showReviveCountdown", "mn.help.showReviveCountdown",
+                () => _showReviveCountdown, v =>
+                {
+                    _showReviveCountdown = v;
+                    ClassIconOverlay.ShowReviveCountdown = v;   // the "(42s)" line; off = name stays in its normal spot
+                    _cfg.Set<bool>("minimalnameplate_showrevivecountdown", v);
+                    _cfg.Save();
+                },
+                dim: () => !_showReviveSealed)),
         SectionPanel(() => _loc.T("mn.sec.size"), () => _loc.T("mn.sec.size.hint"),
             SliderRow("badgesize", "mn.badgeSize", "mn.help.badgeSize",
                 RoundSlider(() => ClassIconOverlay.SizePixels,
@@ -116,6 +127,24 @@ public sealed partial class Plugin
         {
             new CellElement(new TextElement(label, Color: () => TextColor(), NoWrap: true) { Ellipsize = true }, Weight: 1f),
             ToggleChip(get, () => set(!get())),
+            HelpDot(key, "mn.sec.show", label, () => _loc.T(helpKey)),
+        }, Gap: 6f);
+    }
+
+    // Child row of the setting above: label indented 16 px (10 px spacer + the 6 px row gap), same chip + "?" on the same
+    // right edge. While `dim` is true (parent off) the label goes muted and the chip dims — but it stays clickable, and
+    // nothing changes width (colour Funcs only).
+    private const float SubRowIndent = 10f;
+
+    private HudElement SubChipRow(string key, string labelKey, string helpKey, Func<bool> get, Action<bool> set, Func<bool> dim)
+    {
+        Func<string> label = () => _loc.T(labelKey);
+        return new RowElement(new HudElement[]
+        {
+            new SpacerElement(SubRowIndent, 1f),   // width > 0 = fixed (SpacerElement(0) would be the flexible one)
+            new CellElement(new TextElement(label, Color: () => dim() ? MutedColor() : TextColor(), NoWrap: true)
+                { Ellipsize = true }, Weight: 1f),
+            ToggleChip(get, () => set(!get()), dim),
             HelpDot(key, "mn.sec.show", label, () => _loc.T(helpKey)),
         }, Gap: 6f);
     }

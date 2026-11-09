@@ -120,17 +120,25 @@ public sealed partial class Plugin
     // 100 px default (KB WindowBuilder-Patterns, Dungeon Confirm 6b19310). Both states share one HoverFlag.
     private const float ChipWidth  = 64f;
     private const float ChipHeight = 24f;
+    // Dimmed chip (a dependent setting whose parent is off — still clickable, so NOT the recessed "disabled" look of
+    // rule 22): label pulled halfway toward the panel colour, wash at half strength. Colours only — same size.
+    private const float ChipDimTextMix = 0.5f;
+    private const float ChipDimWash    = 0.5f;
 
-    private HudElement ToggleChip(Func<bool> on, Action toggle)
+    // `dim` (optional, polled) greys the chip out while keeping it clickable and the same 64 × 24.
+    private HudElement ToggleChip(Func<bool> on, Action toggle, Func<bool>? dim = null)
     {
         var hover = new HoverFlag();
+        bool Dim() => dim != null && dim();
+        ColorRgba Label(ColorRgba c) => Dim() ? Mix(PanelColor(), c, ChipDimTextMix) : c;
+        float Wash(float a) => (a + (hover.On ? ChipHoverAlpha : 0f)) * (Dim() ? ChipDimWash : 1f);
         return new CellElement(new ConditionalElement(on,
-            ChipShell(DropBold(new TextElement(() => _loc.T("mn.on"), Color: () => StatusGreen, Width: ChipWidth,
+            ChipShell(DropBold(new TextElement(() => _loc.T("mn.on"), Color: () => Label(StatusGreen), Width: ChipWidth,
                     Align: TextAlign.Center, NoWrap: true, FontSize: 13) { Bold = true }),
-                () => StatusGreen with { A = ChipWashAlpha + (hover.On ? ChipHoverAlpha : 0f) }, hover, toggle),
-            ChipShell(new TextElement(() => _loc.T("mn.off"), Color: () => MutedColor(), Width: ChipWidth,
+                () => StatusGreen with { A = Wash(ChipWashAlpha) }, hover, toggle),
+            ChipShell(new TextElement(() => _loc.T("mn.off"), Color: () => Label(MutedColor()), Width: ChipWidth,
                     Align: TextAlign.Center, NoWrap: true),
-                () => MutedColor() with { A = ChipOffAlpha + (hover.On ? ChipHoverAlpha : 0f) }, hover, toggle)),
+                () => MutedColor() with { A = Wash(ChipOffAlpha) }, hover, toggle)),
             Width: ChipWidth);
     }
 

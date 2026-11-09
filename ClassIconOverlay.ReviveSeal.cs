@@ -19,6 +19,9 @@ namespace Stellar.MinimalNameplate;
 internal sealed partial class ClassIconOverlay
 {
     public static bool ShowReviveSealed = true;   // config minimalnameplate_showrevivesealed (Plugin.cs)
+    // config minimalnameplate_showrevivecountdown: the "(42s)" line. Independent of ShowReviveSealed (kept across marker
+    // off/on); OFF = purple badge + name only, name in its normal spot (SealTimerLayout).
+    public static bool ShowReviveCountdown = true;
 
     private const int ReviveSealBuffId = 2110057;    // BuffTable "Weakened: Wish Sealed" — the ONLY 祈愿禁止 row
     private const long NoCountdown     = long.MaxValue; // seal end sentinel: Duration == 0 → marker without a timer
