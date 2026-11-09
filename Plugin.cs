@@ -24,6 +24,7 @@ public sealed partial class Plugin : IStellarPlugin
     private bool _showFriendIcon;
     private bool _showGuildIcon;
     private bool _showReviveSealed;
+    private bool _showReviveCountdown;
 
     public Plugin(IPluginServices services)
     {
@@ -37,6 +38,7 @@ public sealed partial class Plugin : IStellarPlugin
         _showFriendIcon = _cfg.Get<bool>("minimalnameplate_showfriend", _cfg.Get<bool>("minimalnameplate_showrelation", true));
         _showGuildIcon  = _cfg.Get<bool>("minimalnameplate_showguild",  _cfg.Get<bool>("minimalnameplate_showrelation", true));
         _showReviveSealed = _cfg.Get<bool>("minimalnameplate_showrevivesealed", true);
+        _showReviveCountdown = _cfg.Get<bool>("minimalnameplate_showrevivecountdown", true);   // independent of the marker
         ClassIconOverlay.SizePixels    = _cfg.Get<float>("minimalnameplate_sizepx", 50f);
         ClassIconOverlay.NameSize      = _cfg.Get<float>("minimalnameplate_namepx", 64f);
         ClassIconOverlay.MaxIcons      = (int)_cfg.Get<float>("minimalnameplate_maxicons", 100f);
@@ -45,6 +47,7 @@ public sealed partial class Plugin : IStellarPlugin
         ClassIconOverlay.ShowFriendIcon = _showFriendIcon;
         ClassIconOverlay.ShowGuildIcon  = _showGuildIcon;
         ClassIconOverlay.ShowReviveSealed = _showReviveSealed;
+        ClassIconOverlay.ShowReviveCountdown = _showReviveCountdown;
 
         NameplateIconPatch.Install(_services.Harmony.Create("nameplate"), _services.Log.Info);
         NameplateIconPatch.HidePlate = _enabled;   // hide the game's plate while our overlay is on

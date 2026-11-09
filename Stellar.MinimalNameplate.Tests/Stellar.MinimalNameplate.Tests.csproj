@@ -13,5 +13,6 @@
   <!-- Compile the pure-BCL decision rules directly; no framework / Unity / IL2CPP refs needed. -->
   <ItemGroup>
     <Compile Include="../ClassIconRules.cs" />
+    <Compile Include="../SealTimerLayout.cs" />
   </ItemGroup>
 </Project>
