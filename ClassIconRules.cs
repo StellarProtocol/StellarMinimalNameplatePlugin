@@ -34,33 +34,35 @@ internal static class ClassIconRules
     /// </summary>
     public static Type AttrClrType(int attrId) => attrId == AttrProfessionId ? typeof(int) : typeof(long);
 
-    // ── Sprite-scan backoff ───────────────────────────────────────────────────────────────────────────────────────
+    // ── Icon source: framework loader first, piggyback sprite scan as a backed-off fallback ───────────────────────
     //
-    // Class icons are picked up piggyback: whatever sprites the game has ALREADY loaded are scanned for the ones we
-    // need. A profession whose atlas is simply not loaded therefore never resolves, and the pre-fix gate ("scan once
-    // a second while any tracked profession is uncached") re-ran a full loaded-object scan every single second for
-    // the rest of the session. These two rules bound it.
+    // 2026-11-09 (fix/class-icon-load): icons now come from IGameAssets.LoadProfessionIcon, which consumes its
+    // UniTask ONCE inside the framework and caches the result in a shared slot, so any number of plugins can call it.
+    // The old piggyback-only design gave up on a profession after 3 fruitless scans and re-armed only when a NEVER-SEEN
+    // profession entered the AOI — once every class had been seen, a missing icon stayed missing for the session (the
+    // crowd "coloured square, no glyph" report). The scan survives only as a fallback, with NO permanent give-up.
 
-    /// <summary>Scans of a single profession's sprite before the overlay gives up on it.</summary>
-    public const int MaxSpriteMisses = 3;
+    /// <summary>Seconds a profession may stay pending on the framework loader before the sprite-scan fallback joins in.</summary>
+    public const double FallbackAfterSeconds = 10.0;
 
     /// <summary>
-    /// Whether to keep looking for <paramref name="professionId"/>'s icon sprite. False for a non-profession, and
-    /// false once the sprite has failed to turn up <see cref="MaxSpriteMisses"/> times — until a profession id the
-    /// overlay has never tracked enters the AOI, which re-arms every memo (a new atlas may have loaded since).
+    /// Whether the piggyback sprite scan should look for this profession's icon: immediately when the framework handed
+    /// back a destroyed texture (its Loaded slot is never revalidated, so it would keep returning the dead one), or
+    /// once the framework has been pending for <see cref="FallbackAfterSeconds"/>. Never for a non-profession.
     /// </summary>
-    public static bool ShouldSeekSprite(int professionId, int missCount)
-        => professionId > 0 && missCount < MaxSpriteMisses;
+    public static bool ShouldFallbackScan(int professionId, bool frameworkReturnedDead, double pendingSeconds)
+        => professionId > 0 && (frameworkReturnedDead || pendingSeconds >= FallbackAfterSeconds);
 
     /// <summary>
-    /// Seconds to wait before the next sprite scan after <paramref name="consecutiveMisses"/> fruitless ones:
-    /// 1, 2, 5, then 10 (capped). Reset to 0 misses by a match or by a newly seen profession.
+    /// Seconds to wait before the next fallback scan after <paramref name="consecutiveMisses"/> fruitless ones:
+    /// 2, 5, 10, then 30 (capped) — never infinite. The first scan for a newly eligible profession runs at once; the
+    /// counter resets on a match or when no tracked profession needs the fallback any more.
     /// </summary>
     public static double NextScanDelaySeconds(int consecutiveMisses) => consecutiveMisses switch
     {
-        <= 0 => 1.0,
-        1 => 2.0,
+        <= 1 => 2.0,
         2 => 5.0,
-        _ => 10.0,
+        3 => 10.0,
+        _ => 30.0,
     };
 }

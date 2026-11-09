@@ -210,8 +210,8 @@ internal sealed partial class ClassIconOverlay
         }
     }
 
-    // 2 Hz housekeeping, split out of OnUpdate: refresh the tracked-player list, then (throttled + backed off) look
-    // for class-icon sprites we still need.
+    // 2 Hz housekeeping, split out of OnUpdate: refresh the tracked-player list (which also refreshes class icons),
+    // and advance the icon clock.
     //
     // The rebuild timer is STRICT. It used to read `_players.Count == 0 || _rebuildTimer >= 0.5`, so an EMPTY AOI
     // (solo zone, loading screen, or any frame where nothing resolved) re-ran the whole entity-dictionary reflection
@@ -228,11 +228,9 @@ internal sealed partial class ClassIconOverlay
             if (NameplateIconPatch.HidePlate) NameplateIconPatch.ReapplyAll();
         }
 
-        // Piggyback icon resolution: scan already-loaded sprites for any professions we still need. The interval backs
-        // off and each profession is memo'd after a few fruitless scans, so an icon that never loads can no longer pin
-        // a full loaded-object scan at 1 Hz for the whole session — see ClassIconOverlay.Icons.cs.
-        _scanTimer += dt;
-        if (_scanTimer >= ScanDelaySeconds && AnyUncached()) { _scanTimer = 0; _perfScannedThisFrame = true; ScanSprites(); }
+        // Clock for icon resolution (fallback window, scan backoff, missing summary). The icon work itself runs from
+        // RebuildPlayers → RefreshIcons on the 2 Hz cadence — see ClassIconOverlay.Icons.cs.
+        _iconClock += dt;
     }
 
     // Every AOI player (uuid low-16 == 640) with a resolvable profession, scored by camera distance. Throttled — not
@@ -282,8 +280,9 @@ internal sealed partial class ClassIconOverlay
         // by uuid for a stable order (entityDict order can shuffle, briefly swapping which class a badge shows).
         scored.Sort((a, b) => a.dist != b.dist ? a.dist.CompareTo(b.dist) : a.uuid.CompareTo(b.uuid));
         // Resolve friend/guild here (2 Hz) so the per-frame draw loop only reads the cache — ClassIconOverlay.Relation.cs.
-        foreach (var s in scored) { _players.Add((s.uuid, s.prof)); NoteProfession(s.prof); RefreshRelation(s.uuid); }
+        foreach (var s in scored) { _players.Add((s.uuid, s.prof)); RefreshRelation(s.uuid); }
         RefreshSeals();   // revive-sealed corpses: buff read for DEAD players only, 2 Hz — ClassIconOverlay.ReviveSeal.cs
+        RefreshIcons();   // class icons per DISTINCT profession: framework load + liveness + fallback — ClassIconOverlay.Icons.cs
 
         if (PerfDiag) PerfLogRebuild(__t0, __walked);
     }
