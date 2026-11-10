@@ -83,15 +83,23 @@ internal sealed partial class ClassIconOverlay
     private readonly object[] _hudSettingsArgs = new object[2];
     private bool GameShowsPlateFor(long uuid)
     {
+        // The answer only depends on self vs. everyone else, so it is read at most twice per frame (.FrameCache.cs).
+        bool self = uuid == _services.CombatSnapshot.LocalEntityId.Value;
+        if (self) { if (_frameShowSelf < 0) _frameShowSelf = ReadShowsPlateFor(true) ? 1 : 0; return _frameShowSelf == 1; }
+        if (_frameShowOther < 0) _frameShowOther = ReadShowsPlateFor(false) ? 1 : 0;
+        return _frameShowOther == 1;
+    }
+
+    private bool ReadShowsPlateFor(bool self)
+    {
         try
         {
             if (_miGetHudSettingsShow == null || _funcName == null) return true;   // fail-open
             var inst = HudMgrInstance();
             if (inst == null) return true;
-            bool self = uuid == _services.CombatSnapshot.LocalEntityId.Value;
             var ent = self ? _entPlayer : _entChar;
             if (ent == null) return true;
-            // Reused buffer — this runs once per drawn badge per frame; main thread only (ClassIconOverlay.EntityRead.cs).
+            // Reused buffer — at most twice per frame now (GameShowsPlateFor); main thread only (ClassIconOverlay.EntityRead.cs).
             _hudSettingsArgs[0] = ent;
             _hudSettingsArgs[1] = _funcName;
             return _miGetHudSettingsShow.Invoke(inst, _hudSettingsArgs) is not bool b || b;
@@ -148,7 +156,9 @@ internal sealed partial class ClassIconOverlay
         {
             EnsureHideSeek();
             if (_miIsHideSeekScene == null) return false;                              // no gate → not in hide-seek → draw
-            if (_miIsHideSeekScene.Invoke(null, null) is not bool inScene || !inScene) return false;
+            if (_frameHideSeekScene < 0)   // a scene fact: read once per frame, not per player (.FrameCache.cs)
+                _frameHideSeekScene = _miIsHideSeekScene.Invoke(null, null) is true ? 1 : 0;
+            if (_frameHideSeekScene == 0) return false;
             if (!TryGetModelIds(uuid, out int model, out int main)) return false;
             return model != main;   // active model swapped to a prop → transformed hider → suppress badge
         }
