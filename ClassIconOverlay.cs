@@ -165,6 +165,7 @@ internal sealed partial class ClassIconOverlay
 
             long __perfT0 = PerfDiag ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             _perfRebuiltThisFrame = _perfScannedThisFrame = false;
+            BeginFrameCaches();   // per-frame reflection caches (.FrameCache.cs) — before anything below reads them
             TickThrottles(dt, camPos);
 
             _resScale = Mathf.Max(Screen.height, 1) / RefScreenHeight;
@@ -254,7 +255,7 @@ internal sealed partial class ClassIconOverlay
 
         try
         {
-            var mgr  = _piEntMgrInstance!.GetValue(null);
+            var mgr  = FrameEntMgr();
             var dict = mgr == null ? null : (_piEntityDict != null ? _piEntityDict.GetValue(mgr) : _fiEntityDict?.GetValue(mgr));
             var keys = dict?.GetType().GetProperty("Keys")?.GetValue(dict);
             if (keys != null)

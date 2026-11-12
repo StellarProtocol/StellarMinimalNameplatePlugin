@@ -40,7 +40,7 @@ internal sealed partial class ClassIconOverlay
         head = default;
         if (!Resolve()) return false;
 
-        var mgr = _piEntMgrInstance!.GetValue(null);
+        var mgr = FrameEntMgr();   // once per frame, not once per player (.FrameCache.cs)
         if (mgr == null) return false;
         _headArgs[0] = uuid;                       // reused buffer — main thread only, see ClassIconOverlay.EntityRead.cs
         var ent = _miGetEntity!.Invoke(mgr, _headArgs);

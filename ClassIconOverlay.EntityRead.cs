@@ -152,7 +152,7 @@ internal sealed partial class ClassIconOverlay
         try
         {
             if (!Resolve()) return null;
-            var mgr = _piEntMgrInstance!.GetValue(null);
+            var mgr = FrameEntMgr();   // once per frame (.FrameCache.cs)
             if (mgr == null) return null;
             _entityArgs[0] = uuid;
             return _miGetEntity!.Invoke(mgr, _entityArgs);
